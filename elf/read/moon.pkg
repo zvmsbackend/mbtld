@@ -4,3 +4,8 @@ import {
   "sennenki/mbtld/elf/base",
   "sennenki/mbtld/elf/model",
 }
+
+import {
+  "sennenki/mbtld/elf/base",
+  "sennenki/mbtld/elf/read",
+} for "test"

@@ -2,7 +2,11 @@
 package "sennenki/mbtld/elf/read"
 
 // Values
+pub const AR_HEADER_SIZE : Int = 60
+
 pub const AR_MAGIC : String = "!<arch>"
+
+pub fn is_archive_magic(BytesView) -> Bool
 
 pub fn is_elf_magic(BytesView) -> Bool
 

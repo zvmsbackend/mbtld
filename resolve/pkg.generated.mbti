@@ -1,0 +1,46 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "sennenki/mbtld/resolve"
+
+import {
+  "sennenki/mbtld/ir",
+}
+
+// Values
+pub fn error(String, String) -> Diagnostic
+
+pub fn get_output_section(String) -> String
+
+pub fn info(String, String) -> Diagnostic
+
+pub fn merge_sections(@ir.LinkIr, @ir.LinkOptions) -> @ir.LinkIr raise @ir.ResolveError
+
+pub fn resolve_symbols(@ir.LinkIr, @ir.LinkOptions) -> @ir.LinkIr raise @ir.ResolveError
+
+pub fn section_order(String) -> Int
+
+pub fn to_diagnostic(@ir.ResolveError) -> String
+
+pub fn warning(String, String) -> Diagnostic
+
+// Errors
+
+// Types and methods
+pub enum DiagLevel {
+  Error
+  Warning
+  Info
+} derive(Eq, Show)
+
+pub struct Diagnostic {
+  level : DiagLevel
+  code : String
+  message : String
+  file : String?
+  section : String?
+  symbol : String?
+} derive(Show)
+
+// Type aliases
+
+// Traits
+

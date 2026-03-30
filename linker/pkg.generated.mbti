@@ -1,0 +1,37 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "sennenki/mbtld/linker"
+
+import {
+  "sennenki/mbtld/ir",
+}
+
+// Values
+pub fn build_ir(Array[@ir.InputObject], @ir.LinkOptions) -> @ir.LinkIr
+
+pub fn link(@ir.LinkOptions) -> @ir.LinkArtifact raise @ir.LinkError
+
+pub fn run_pipeline(Array[@ir.InputObject], @ir.LinkOptions) -> PipelineResult raise @ir.LinkError
+
+// Errors
+
+// Types and methods
+type DiagLevel derive(Eq, Show)
+
+pub struct Diagnostic {
+  level : DiagLevel
+  code : String
+  message : String
+  file : String?
+  section : String?
+  symbol : String?
+} derive(Show)
+
+pub struct PipelineResult {
+  ir : @ir.LinkIr
+  diagnostics : Array[Diagnostic]
+} derive(Show)
+
+// Type aliases
+
+// Traits
+

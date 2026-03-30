@@ -1,0 +1,20 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "sennenki/mbtld/write"
+
+import {
+  "sennenki/mbtld/ir",
+}
+
+// Values
+pub fn write_pie_or_shared(@ir.LinkIr, @ir.LinkOptions) -> @ir.LinkArtifact raise @ir.WriteError
+
+pub fn write_relocatable(@ir.LinkIr, @ir.LinkOptions) -> @ir.LinkArtifact raise @ir.WriteError
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+
+// Traits
+

@@ -1,0 +1,22 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "sennenki/mbtld/reloc"
+
+import {
+  "sennenki/mbtld/ir",
+}
+
+// Values
+pub fn apply_relocations(@ir.LinkIr, @ir.LinkOptions) -> @ir.LinkIr raise @ir.RelocError
+
+pub fn apply_x86_64_reloc(Bytes, UInt64, UInt, UInt64, Int64, UInt64) -> Unit raise @ir.RelocError
+
+pub fn is_reloc_supported(@ir.Arch, UInt) -> Bool
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+
+// Traits
+

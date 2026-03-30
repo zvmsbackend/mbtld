@@ -1,0 +1,11 @@
+import {
+  "sennenki/mbtld/ir",
+  "sennenki/mbtld/linker",
+  "moonbitlang/core/argparse",
+  "moonbitlang/core/string",
+  "moonbitlang/x/sys",
+}
+
+options(
+  "is-main": true,
+)

@@ -1,0 +1,191 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "sennenki/mbtld/ir"
+
+// Values
+
+// Errors
+pub(all) suberror CliError {
+  InvalidArgs(String)
+  MissingValue(String)
+  UnsupportedFlag(String)
+}
+
+pub(all) suberror ElfError {
+  BadSignature(String)
+  UnsupportedClass(String)
+  UnsupportedMachine(String)
+  InvalidObjectType(String)
+  CorruptArchive(String)
+  TruncatedFile(String)
+  InvalidSection(String)
+  InvalidSymbol(String)
+  InvalidRelocation(String)
+}
+
+pub(all) suberror LinkError {
+  Cli(CliError)
+  Elf(ElfError)
+  Resolve(ResolveError)
+  Reloc(RelocError)
+  Write(WriteError)
+}
+
+pub(all) suberror RelocError {
+  UnsupportedRelocType(UInt)
+  RelocOverflow(String)
+  BadRelocTarget(String)
+}
+
+pub(all) suberror ResolveError {
+  UndefinedSymbol(String)
+  MultipleDefinition(String)
+  SectionConflict(String)
+}
+
+pub(all) suberror WriteError {
+  LayoutFailure(String)
+  InvalidOutputKind(String)
+  SerializeFailure(String)
+}
+
+// Types and methods
+pub(all) enum Arch {
+  X86_64
+  AARCH64
+  RISCV64
+  LOONGARCH64
+} derive(Eq, Show)
+
+pub(all) enum Bitness {
+  ELF32
+  ELF64
+} derive(Eq, Show)
+
+pub(all) struct InputObject {
+  path : String
+  arch : Arch
+  bitness : Bitness
+  sections : Array[SectionRec]
+  symbols : Array[SymbolRec]
+  relocs : Array[RelocRec]
+} derive(Show)
+
+pub(all) struct LinkArtifact {
+  bytes : Bytes
+  map_text : String?
+} derive(Show)
+
+pub(all) struct LinkIr {
+  arch : Arch
+  bitness : Bitness
+  merged_sections : Array[MergedSection]
+  merged_symbols : Array[MergedSymbol]
+  pending_relocs : Array[PendingReloc]
+} derive(Show)
+
+pub(all) struct LinkOptions {
+  output : String
+  output_kind : OutputKind
+  entry : String
+  input_files : Array[String]
+  dynamic_libs : Array[String]
+  dynamic_linker : String?
+  strip_symbols : Bool
+  strip_debug : Bool
+  no_default_lib : Bool
+  smart_linking : Bool
+  section_align : UInt
+  start_address : UInt64
+  verbose : Bool
+} derive(Show)
+
+pub(all) struct MergedSection {
+  output_name : String
+  output_index : Int
+  align : UInt64
+  bytes : Bytes
+} derive(Show)
+
+pub(all) struct MergedSymbol {
+  name : String
+  output_sec : Int
+  output_value : UInt64
+  binding : SymbolBinding
+  ty : SymbolType
+  vis : Visibility
+} derive(Show)
+
+pub(all) enum OutputKind {
+  Relocatable
+  ExecutablePie
+  SharedLibrary
+  EfiApplication
+  EfiBootDriver
+  EfiRuntimeDriver
+} derive(Eq, Show)
+
+pub(all) struct PendingReloc {
+  out_sec : Int
+  patch_off : UInt64
+  rel_type : UInt
+  target_sym : Int
+  addend : Int64
+} derive(Show)
+
+pub(all) struct RelocRec {
+  sec_index : Int
+  offset : UInt64
+  rel_type : UInt
+  sym_index : Int
+  addend : Int64
+  has_addend : Bool
+} derive(Show)
+
+pub(all) struct SectionRec {
+  name : String
+  name_hash : UInt64
+  ty : UInt
+  flags : UInt64
+  align : UInt64
+  data : Bytes
+  info : UInt
+  link : UInt
+} derive(Show)
+
+pub(all) enum SymbolBinding {
+  Local
+  Global
+  Weak
+} derive(Eq, Show)
+
+pub(all) struct SymbolRec {
+  name : String
+  name_hash : UInt64
+  binding : SymbolBinding
+  ty : SymbolType
+  vis : Visibility
+  sec_index : Int
+  value : UInt64
+  size : UInt64
+} derive(Show)
+
+pub(all) enum SymbolType {
+  NoType
+  Object
+  Func
+  Section
+  File
+  Tls
+} derive(Eq, Show)
+
+pub(all) enum Visibility {
+  Default
+  Hidden
+  Protected
+  Internal
+} derive(Eq, Show)
+
+// Type aliases
+
+// Traits
+

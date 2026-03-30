@@ -1,0 +1,20 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "sennenki/mbtld/cli"
+
+import {
+  "sennenki/mbtld/ir",
+}
+
+// Values
+pub fn parse_args(Array[String]) -> @ir.LinkOptions raise @ir.CliError
+
+pub fn run_cli(Array[String]) -> Int
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+
+// Traits
+

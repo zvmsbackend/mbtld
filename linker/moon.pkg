@@ -1,0 +1,6 @@
+import {
+  "sennenki/mbtld/ir",
+  "sennenki/mbtld/resolve",
+  "sennenki/mbtld/reloc",
+  "sennenki/mbtld/write",
+}

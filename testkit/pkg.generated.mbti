@@ -1,0 +1,26 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "sennenki/mbtld/testkit"
+
+// Values
+pub fn assert_same_relocations(Bytes, Bytes) -> Bool
+
+pub fn assert_same_sections(Bytes, Bytes) -> Bool
+
+pub fn assert_same_symbols(Bytes, Bytes) -> Bool
+
+pub fn assert_snapshot(String, String) -> Bool
+
+pub fn load_fixture(String) -> Bytes?
+
+pub fn load_fixtures(String) -> Array[(String, Bytes)]
+
+pub fn snapshot_elf_summary(Bytes) -> String
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+
+// Traits
+

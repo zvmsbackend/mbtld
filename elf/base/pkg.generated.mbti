@@ -1,0 +1,45 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "sennenki/mbtld/elf/base"
+
+// Values
+pub fn align_down(UInt64, UInt64) -> UInt64
+
+pub fn align_up(UInt64, UInt64) -> UInt64
+
+pub fn is_aligned(UInt64, UInt64) -> Bool
+
+pub fn read_i16_le(BytesView, Int) -> Int16
+
+pub fn read_i32_le(BytesView, Int) -> Int
+
+pub fn read_i64_le(BytesView, Int) -> Int64
+
+pub fn read_u16_le(BytesView, Int) -> UInt16
+
+pub fn read_u32_le(BytesView, Int) -> UInt
+
+pub fn read_u64_le(BytesView, Int) -> UInt64
+
+pub fn read_u8(BytesView, Int) -> Byte
+
+// Errors
+
+// Types and methods
+pub struct IoCursor {
+  data : Bytes
+  mut pos : Int
+}
+pub fn IoCursor::new(Bytes) -> Self
+pub fn IoCursor::position(Self) -> Int
+pub fn IoCursor::read_bytes(Self, Int) -> Result[Bytes, String]
+pub fn IoCursor::read_u16_le(Self) -> Result[UInt16, String]
+pub fn IoCursor::read_u32_le(Self) -> Result[UInt, String]
+pub fn IoCursor::read_u64_le(Self) -> Result[UInt64, String]
+pub fn IoCursor::read_u8(Self) -> Result[Byte, String]
+pub fn IoCursor::remaining(Self) -> Int
+pub fn IoCursor::skip(Self, Int) -> Unit
+
+// Type aliases
+
+// Traits
+

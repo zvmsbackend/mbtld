@@ -93,7 +93,7 @@ pub const EM_LOONGARCH : UInt16 = 258
 
 ///|
 /// ELF64 header
-pub struct Elf64Ehdr {
+pub(all) struct Elf64Ehdr {
   e_ident : Bytes
   e_type : UInt16
   e_machine : UInt16
@@ -207,3 +207,22 @@ pub const SHF_GROUP : UInt64 = 0x200
 
 ///|
 pub const SHF_TLS : UInt64 = 0x400
+
+///|
+/// ELF64 structure sizes
+pub const ELF64_EHDR_SIZE : Int = 64
+
+///|
+pub const ELF64_SHDR_SIZE : Int = 64
+
+///|
+pub const ELF64_PHDR_SIZE : Int = 56
+
+///|
+pub const ELF64_SYM_SIZE : Int = 24
+
+///|
+pub const ELF64_REL_SIZE : Int = 16
+
+///|
+pub const ELF64_RELA_SIZE : Int = 24

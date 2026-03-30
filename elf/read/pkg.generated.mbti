@@ -6,7 +6,13 @@ pub const AR_MAGIC : String = "!<arch>"
 
 pub fn is_elf_magic(BytesView) -> Bool
 
+pub fn parse_object(Bytes, String) -> ParsedObject raise ElfError
+
 pub fn read_archive(Bytes, String) -> Array[ArchiveMember] raise ElfError
+
+pub fn read_cstring(BytesView, UInt) -> String
+
+pub fn read_object(String) -> ParsedObject raise
 
 // Errors
 type ElfError

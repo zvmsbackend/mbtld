@@ -1,5 +1,6 @@
 import {
   "moonbitlang/core/string",
+  "moonbitlang/x/fs",
   "sennenki/mbtld/elf/base",
   "sennenki/mbtld/elf/model",
 }

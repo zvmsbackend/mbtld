@@ -22,6 +22,18 @@ pub const EI_OSABI : Int = 7
 
 pub const EI_VERSION : Int = 6
 
+pub const ELF64_EHDR_SIZE : Int = 64
+
+pub const ELF64_PHDR_SIZE : Int = 56
+
+pub const ELF64_RELA_SIZE : Int = 24
+
+pub const ELF64_REL_SIZE : Int = 16
+
+pub const ELF64_SHDR_SIZE : Int = 64
+
+pub const ELF64_SYM_SIZE : Int = 24
+
 pub const ELFCLASS32 : Byte = 1
 
 pub const ELFCLASS64 : Byte = 2
@@ -235,7 +247,7 @@ pub const STV_PROTECTED : Byte = 3
 // Errors
 
 // Types and methods
-pub struct Elf64Ehdr {
+pub(all) struct Elf64Ehdr {
   e_ident : Bytes
   e_type : UInt16
   e_machine : UInt16

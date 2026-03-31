@@ -51,6 +51,18 @@ fn pie_mk_ir(raw : Bytes) -> @ir.LinkIr {
 }
 
 ///|
+fn pie_read_u64_le(bytes : Bytes, off : Int) -> UInt64 {
+  bytes[off].to_uint64() |
+  (bytes[off + 1].to_uint64() << 8) |
+  (bytes[off + 2].to_uint64() << 16) |
+  (bytes[off + 3].to_uint64() << 24) |
+  (bytes[off + 4].to_uint64() << 32) |
+  (bytes[off + 5].to_uint64() << 40) |
+  (bytes[off + 6].to_uint64() << 48) |
+  (bytes[off + 7].to_uint64() << 56)
+}
+
+///|
 test "write_pie_or_shared rejects relocatable kind" {
   let mut msg = ""
   try {
@@ -113,8 +125,17 @@ test "write_pie_or_shared emits minimal dynamic metadata" {
   // Third PHDR type/flags
   inspect(artifact.bytes[176], content="b'\\x02'")
   inspect(artifact.bytes[180], content="b'\\x06'")
-  // .dynstr payload contains "libc.so.6"
-  inspect(artifact.bytes[236], content="b'\\x6C'")
+
+  let dyn_off = pie_read_u64_le(artifact.bytes, 184).to_int()
+  // DT_NEEDED("libc.so.6")
+  inspect(pie_read_u64_le(artifact.bytes, dyn_off), content="1")
+  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 8), content="1")
+  // DT_STRTAB / DT_STRSZ / DT_SYMTAB / DT_SYMENT / DT_NULL
+  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 16), content="5")
+  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 32), content="10")
+  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 48), content="6")
+  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 64), content="11")
+  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 80), content="0")
 }
 
 ///|

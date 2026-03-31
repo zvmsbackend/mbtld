@@ -31,6 +31,8 @@ fn pie_starts_with(s : String, prefix : String) -> Bool {
 fn pie_infer_sh_type(name : String) -> UInt {
   if name == ".dynamic" {
     @model.SHT_DYNAMIC
+  } else if name == ".dynsym" {
+    @model.SHT_DYNSYM
   } else if name == ".dynstr" {
     @model.SHT_STRTAB
   } else if name == ".bss" || name == ".tbss" {
@@ -51,6 +53,8 @@ fn pie_infer_sh_flags(name : String) -> UInt64 {
   let mut flags = 0UL
   if name == ".text" || name == ".init" || name == ".fini" {
     flags = @model.SHF_ALLOC | @model.SHF_EXECINSTR
+  } else if name == ".dynsym" {
+    flags = @model.SHF_ALLOC
   } else if name == ".dynstr" {
     flags = @model.SHF_ALLOC
   } else if name == ".dynamic" {
@@ -149,6 +153,8 @@ fn pie_write_u64_le(out : Array[Byte], offset : Int, v : UInt64) -> Unit {
 fn pie_infer_sh_entsize(name : String, sec_ty : UInt) -> UInt64 {
   if name == ".dynamic" || sec_ty == @model.SHT_DYNAMIC {
     16UL
+  } else if name == ".dynsym" || sec_ty == @model.SHT_DYNSYM {
+    @model.ELF64_SYM_SIZE.to_uint64()
   } else {
     0UL
   }
@@ -176,8 +182,8 @@ fn pie_build_dynstr(libs : Array[String]) -> PieDynBuild {
 
 ///|
 fn pie_build_dynamic_placeholder(needed_count : Int) -> Bytes {
-  // DT_NEEDED[*], DT_STRTAB, DT_STRSZ, DT_NULL
-  let entry_count = needed_count + 3
+  // DT_NEEDED[*], DT_STRTAB, DT_STRSZ, DT_SYMTAB, DT_SYMENT, DT_NULL
+  let entry_count = needed_count + 5
   let out : Array[Byte] = []
   for _ in 0..<(entry_count * 16) {
     out.push(0)
@@ -285,6 +291,12 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
     dyn_needed_offsets = dyn_build.needed_offsets
     has_dynamic = true
     sections.push({
+      output_name: ".dynsym",
+      output_index: sections.length(),
+      align: 8UL,
+      bytes: b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+    })
+    sections.push({
       output_name: ".dynstr",
       output_index: sections.length(),
       align: 1UL,
@@ -334,9 +346,13 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   let mut rw_range = pie_empty_load_range()
   let mut dynstr_addr = 0UL
   let mut dynstr_size = 0UL
+  let mut dynsym_addr = 0UL
   let mut dynamic_off = 0UL
   let mut dynamic_addr = 0UL
   let mut dynamic_size = 0UL
+  let mut dynstr_shidx = 0
+  let mut dynsym_shidx = 0
+  let mut dynamic_shidx = 0
   for i = 0; i < sections.length(); i = i + 1 {
     let sec = sections[i]
     let sec_ty = pie_infer_sh_type(sec.output_name)
@@ -362,14 +378,21 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
 
     vcursor += sec.bytes.length()
 
+    let sh_index = i + 1
+    if sec.output_name == ".dynsym" {
+      dynsym_addr = sec_addr
+      dynsym_shidx = sh_index
+    }
     if sec.output_name == ".dynstr" {
       dynstr_addr = sec_addr
       dynstr_size = sec.bytes.length().to_uint64()
+      dynstr_shidx = sh_index
     }
     if sec.output_name == ".dynamic" {
       dynamic_off = sec_off
       dynamic_addr = sec_addr
       dynamic_size = sec.bytes.length().to_uint64()
+      dynamic_shidx = sh_index
     }
 
     if (sec_flags & @model.SHF_ALLOC) != 0UL {
@@ -401,11 +424,35 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
       sh_addr: sec_addr,
       sh_offset: sec_off,
       sh_size: sec.bytes.length().to_uint64(),
-      sh_link: 0,
-      sh_info: 0,
+      sh_link: if sec.output_name == ".dynamic" || sec.output_name == ".dynsym" {
+        dynstr_shidx.reinterpret_as_uint()
+      } else {
+        0
+      },
+      sh_info: if sec.output_name == ".dynsym" {
+        1
+      } else {
+        0
+      },
       sh_addralign: sec_align,
       sh_entsize: sec_entsize,
     })
+  }
+
+  if has_dynamic && dynamic_shidx > 0 {
+    let dynamic_hdr = shdrs[dynamic_shidx]
+    shdrs[dynamic_shidx] = {
+      ..dynamic_hdr,
+      sh_link: dynstr_shidx.reinterpret_as_uint(),
+    }
+  }
+  if has_dynamic && dynsym_shidx > 0 {
+    let dynsym_hdr = shdrs[dynsym_shidx]
+    shdrs[dynsym_shidx] = {
+      ..dynsym_hdr,
+      sh_link: dynstr_shidx.reinterpret_as_uint(),
+      sh_info: 1,
+    }
   }
 
   let shstr_off = cursor.to_uint64()
@@ -522,7 +569,9 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
     let dt_null = 0UL
     let dt_needed = 1UL
     let dt_strtab = 5UL
+    let dt_symtab = 6UL
     let dt_strsz = 10UL
+    let dt_syment = 11UL
 
     let mut dyn_idx = 0
     for off in dyn_needed_offsets {
@@ -532,6 +581,16 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
     pie_dynamic_set_entry(file, dynamic_off, dyn_idx, dt_strtab, dynstr_addr)
     dyn_idx += 1
     pie_dynamic_set_entry(file, dynamic_off, dyn_idx, dt_strsz, dynstr_size)
+    dyn_idx += 1
+    pie_dynamic_set_entry(file, dynamic_off, dyn_idx, dt_symtab, dynsym_addr)
+    dyn_idx += 1
+    pie_dynamic_set_entry(
+      file,
+      dynamic_off,
+      dyn_idx,
+      dt_syment,
+      @model.ELF64_SYM_SIZE.to_uint64(),
+    )
     dyn_idx += 1
     pie_dynamic_set_entry(file, dynamic_off, dyn_idx, dt_null, 0UL)
   }

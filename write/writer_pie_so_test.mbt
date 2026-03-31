@@ -436,21 +436,41 @@ test "write_pie_or_shared emits rela.plt and DT_JMPREL tags" {
   let mut rela_off = 0UL
   let mut rela_size = 0UL
   let mut rela_entsize = 0UL
+  let mut rela_info = 0U
+  let mut got_plt_idx = -1
+  let mut got_plt_addr = 0UL
+  let mut got_plt_size = 0UL
   for i in 0..<e_shnum {
     let sh_off = e_shoff + i * sh_entsize
     let sh_type = pie_read_u32_le(artifact.bytes, sh_off + 4)
+    let sh_size = pie_read_u64_le(artifact.bytes, sh_off + 32)
+    let sh_addr = pie_read_u64_le(artifact.bytes, sh_off + 16)
+    let sh_entsize_val = pie_read_u64_le(artifact.bytes, sh_off + 56)
     if sh_type == @model.SHT_RELA {
       rela_off = pie_read_u64_le(artifact.bytes, sh_off + 24)
-      rela_size = pie_read_u64_le(artifact.bytes, sh_off + 32)
-      rela_entsize = pie_read_u64_le(artifact.bytes, sh_off + 56)
+      rela_size = sh_size
+      rela_info = pie_read_u32_le(artifact.bytes, sh_off + 44)
+      rela_entsize = sh_entsize_val
+    }
+    if sh_type == @model.SHT_PROGBITS &&
+      sh_size == 32UL &&
+      sh_entsize_val == 0UL {
+      got_plt_idx = i
+      got_plt_addr = sh_addr
+      got_plt_size = sh_size
     }
   }
 
   inspect(rela_size, content="24")
   inspect(rela_entsize, content="24")
+  inspect(rela_info, content="\{got_plt_idx.reinterpret_as_uint()}")
+  inspect(got_plt_size, content="32")
 
   let rela_entry_off = rela_off.to_int()
-  inspect(pie_read_u64_le(artifact.bytes, rela_entry_off), content="296")
+  inspect(
+    pie_read_u64_le(artifact.bytes, rela_entry_off),
+    content="\{got_plt_addr + 24UL}",
+  )
   inspect(
     pie_read_u64_le(artifact.bytes, rela_entry_off + 8),
     content="4294967303",
@@ -524,9 +544,12 @@ test "write_pie_or_shared emits got.plt and DT_PLTGOT tag" {
 
   let mut got_plt_addr = 0UL
   let mut got_plt_size = 0UL
+  let mut got_plt_off = 0UL
+  let mut dynamic_addr = 0UL
   for i in 0..<e_shnum {
     let sh_off = e_shoff + i * sh_entsize
     let sh_type = pie_read_u32_le(artifact.bytes, sh_off + 4)
+    let sh_off_val = pie_read_u64_le(artifact.bytes, sh_off + 24)
     let sh_size = pie_read_u64_le(artifact.bytes, sh_off + 32)
     let sh_addr = pie_read_u64_le(artifact.bytes, sh_off + 16)
     let sh_entsize_val = pie_read_u64_le(artifact.bytes, sh_off + 56)
@@ -534,12 +557,20 @@ test "write_pie_or_shared emits got.plt and DT_PLTGOT tag" {
     if sh_type == @model.SHT_PROGBITS &&
       sh_size == 32UL &&
       sh_entsize_val == 0UL {
+      got_plt_off = sh_off_val
       got_plt_addr = sh_addr
       got_plt_size = sh_size
+    }
+    if sh_type == @model.SHT_DYNAMIC {
+      dynamic_addr = sh_addr
     }
   }
 
   inspect(got_plt_size, content="32")
+  inspect(
+    pie_read_u64_le(artifact.bytes, got_plt_off.to_int()),
+    content="\{dynamic_addr}",
+  )
 
   let dyn_off = pie_read_u64_le(artifact.bytes, 184).to_int()
   let mut has_dt_pltgot = false

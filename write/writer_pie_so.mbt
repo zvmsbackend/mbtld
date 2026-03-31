@@ -693,6 +693,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   let mut dynamic_off = 0UL
   let mut dynamic_addr = 0UL
   let mut dynamic_size = 0UL
+  let mut got_plt_off = 0UL
   let mut got_plt_addr = 0UL
   let mut rela_dyn_off = 0UL
   let mut rela_dyn_addr = 0UL
@@ -704,6 +705,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   let mut hash_shidx = 0
   let mut dynsym_shidx = 0
   let mut dynamic_shidx = 0
+  let mut got_plt_shidx = 0
   let mut rela_dyn_shidx = 0
   let mut rela_plt_shidx = 0
   let merged_sec_count = ir.merged_sections.length()
@@ -761,7 +763,11 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
         dynamic_size = sec.bytes.length().to_uint64()
         dynamic_shidx = sh_index
       }
-      ".got.plt" => got_plt_addr = sec_addr
+      ".got.plt" => {
+        got_plt_off = sec_off
+        got_plt_addr = sec_addr
+        got_plt_shidx = sh_index
+      }
       ".rela.dyn" => {
         rela_dyn_off = sec_off
         rela_dyn_addr = sec_addr
@@ -815,6 +821,8 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
       },
       sh_info: if sec.output_name == ".dynsym" {
         1
+      } else if sec.output_name == ".rela.plt" {
+        got_plt_shidx.reinterpret_as_uint()
       } else {
         0
       },
@@ -861,6 +869,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
       ..rela_plt_hdr,
       sh_type: @model.SHT_RELA,
       sh_link: dynsym_shidx.reinterpret_as_uint(),
+      sh_info: got_plt_shidx.reinterpret_as_uint(),
       sh_entsize: @model.ELF64_RELA_SIZE.to_uint64(),
       sh_addralign: 8UL,
     }
@@ -878,12 +887,16 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
       pie_write_u64_le(file, entry_off + 16, rec.addend.reinterpret_as_uint64())
     }
   }
+
+  if has_dynamic && has_pltgot && got_plt_off > 0UL {
+    // got.plt[0] points at _DYNAMIC on x86_64 System V ABI.
+    pie_write_u64_le(file, got_plt_off.to_int(), dynamic_addr)
+  }
+
   if has_dynamic && has_rela_plt {
     for i, rec in plt_rela_recs {
-      if rec.out_sec < 0 || rec.out_sec >= section_addrs.length() {
-        continue
-      }
-      let r_off = section_addrs[rec.out_sec] + rec.patch_off
+      // .got.plt[0..2] are reserved; JUMP_SLOT entries start from index 3.
+      let r_off = got_plt_addr + ((3 + i) * 8).to_uint64()
       let entry_off = rela_plt_off.to_int() + i * @model.ELF64_RELA_SIZE
       pie_write_u64_le(file, entry_off, r_off)
       pie_write_u64_le(file, entry_off + 8, rec.r_info)

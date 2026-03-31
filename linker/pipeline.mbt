@@ -44,6 +44,34 @@ fn first_input_file(inputs : Array[@ir.InputObject]) -> String? {
 }
 
 ///|
+fn pipeline_is_exec_section(name : String) -> Bool {
+  name == ".text" ||
+  name == ".init" ||
+  name == ".fini" ||
+  name.has_prefix(".text.")
+}
+
+///|
+fn pipeline_find_fallback_entry(ir : @ir.LinkIr) -> String? {
+  let candidates = ["_start", "main"]
+  for cand in candidates {
+    for sym in ir.merged_symbols {
+      if sym.name != cand {
+        continue
+      }
+      if sym.output_sec < 0 || sym.output_sec >= ir.merged_sections.length() {
+        continue
+      }
+      let sec_name = ir.merged_sections[sym.output_sec].output_name
+      if sym.ty is @ir.Func || pipeline_is_exec_section(sec_name) {
+        return Some(cand)
+      }
+    }
+  }
+  None
+}
+
+///|
 /// Run linking pipeline
 pub fn run_pipeline(
   inputs : Array[@ir.InputObject],
@@ -151,6 +179,30 @@ pub fn run_pipeline(
         file?=first_file,
       ),
     )
+  }
+
+  if opts.output_kind is @ir.ExecutablePie && opts.entry == "" {
+    match pipeline_find_fallback_entry(ir) {
+      Some(sym_name) =>
+        diagnostics.push(
+          Diagnostic::new(
+            Info,
+            "PIPELINE_ENTRY_FALLBACK",
+            "using fallback entry symbol: \{sym_name}",
+            file?=first_file,
+            symbol=sym_name,
+          ),
+        )
+      None =>
+        diagnostics.push(
+          Diagnostic::new(
+            Warning,
+            "PIPELINE_ENTRY_MISSING",
+            "no executable fallback entry symbol found (_start/main)",
+            file?=first_file,
+          ),
+        )
+    }
   }
 
   let ir = @resolve.resolve_symbols(ir, opts) catch { e => raise Resolve(e) }

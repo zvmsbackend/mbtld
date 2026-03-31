@@ -175,6 +175,59 @@ test "write_pie_or_shared writes e_entry from entry symbol" {
 }
 
 ///|
+test "write_pie_or_shared defaults e_entry to _start for executable pie" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 1UL, bytes: b"\x90\xC3" },
+    ],
+    merged_symbols: [
+      {
+        name: "_start",
+        output_sec: 0,
+        output_value: 0UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+  }
+
+  let artifact = write_pie_or_shared(ir, pie_test_opts(ExecutablePie)) catch {
+    _ => abort("unexpected writer error")
+  }
+
+  // data_start is fixed at ELF64_EHDR_SIZE + 4 * ELF64_PHDR_SIZE = 0x120.
+  inspect(pie_read_u64_le(artifact.bytes, 24), content="288")
+}
+
+///|
+test "write_pie_or_shared defaults e_entry to main when _start missing" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 1UL, bytes: b"\x90\xC3" },
+    ],
+    merged_symbols: [
+      {
+        name: "main",
+        output_sec: 0,
+        output_value: 1UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+  }
+
+  let artifact = write_pie_or_shared(ir, pie_test_opts(ExecutablePie)) catch {
+    _ => abort("unexpected writer error")
+  }
+
+  inspect(pie_read_u64_le(artifact.bytes, 24), content="289")
+}
+
+///|
 test "write_pie_or_shared emits minimal dynamic metadata" {
   let ir = {
     ..pie_mk_ir(b"\x7fELF"),

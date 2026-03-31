@@ -377,15 +377,23 @@ fn pie_resolve_entry_addr(
   opts : @ir.LinkOptions,
   section_addrs : Array[UInt64],
 ) -> UInt64 {
-  if opts.entry == "" {
-    return 0UL
+  let entry_candidates : Array[String] = if opts.entry != "" {
+    [opts.entry]
+  } else if opts.output_kind is @ir.ExecutablePie {
+    ["_start", "main"]
+  } else {
+    []
   }
-  let found = ir.merged_symbols.iter().find_first(sym => sym.name == opts.entry)
-  if found is Some(sym) {
-    if sym.output_sec >= 0 && sym.output_sec < section_addrs.length() {
-      return section_addrs[sym.output_sec] + sym.output_value
+
+  for name in entry_candidates {
+    let found = ir.merged_symbols.iter().find_first(sym => sym.name == name)
+    if found is Some(sym) {
+      if sym.output_sec >= 0 && sym.output_sec < section_addrs.length() {
+        return section_addrs[sym.output_sec] + sym.output_value
+      }
     }
   }
+
   0UL
 }
 

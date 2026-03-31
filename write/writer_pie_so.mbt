@@ -25,6 +25,7 @@ fn pie_infer_sh_type(name : String) -> UInt {
     ".dynamic" => @model.SHT_DYNAMIC
     ".hash" => @model.SHT_HASH
     ".rela.dyn" => @model.SHT_RELA
+    ".rela.plt" => @model.SHT_RELA
     ".dynsym" => @model.SHT_DYNSYM
     ".dynstr" => @model.SHT_STRTAB
     ".bss" | ".tbss" => @model.SHT_NOBITS
@@ -37,19 +38,17 @@ fn pie_infer_sh_type(name : String) -> UInt {
 
 ///|
 fn pie_infer_sh_flags(name : String) -> UInt64 {
-  let flags = if name == ".text" || name == ".init" || name == ".fini" {
-    @model.SHF_ALLOC | @model.SHF_EXECINSTR
-  } else {
-    match name {
-      ".interp" => @model.SHF_ALLOC
-      ".hash" => @model.SHF_ALLOC
-      ".dynsym" => @model.SHF_ALLOC
-      ".dynstr" => @model.SHF_ALLOC
-      ".rela.dyn" => @model.SHF_ALLOC
-      ".dynamic" => @model.SHF_ALLOC | @model.SHF_WRITE
-      ".rodata" => @model.SHF_ALLOC
-      _ => @model.SHF_ALLOC | @model.SHF_WRITE
-    }
+  let flags = match name {
+    ".text" | ".init" | ".fini" => @model.SHF_ALLOC | @model.SHF_EXECINSTR
+    ".interp" => @model.SHF_ALLOC
+    ".hash" => @model.SHF_ALLOC
+    ".dynsym" => @model.SHF_ALLOC
+    ".dynstr" => @model.SHF_ALLOC
+    ".rela.dyn" => @model.SHF_ALLOC
+    ".rela.plt" => @model.SHF_ALLOC
+    ".dynamic" => @model.SHF_ALLOC | @model.SHF_WRITE
+    ".rodata" => @model.SHF_ALLOC
+    _ => @model.SHF_ALLOC | @model.SHF_WRITE
   }
 
   if name.has_prefix(".t") {
@@ -126,7 +125,9 @@ fn pie_infer_sh_entsize(name : String, sec_ty : UInt) -> UInt64 {
     16UL
   } else if name == ".hash" || sec_ty == @model.SHT_HASH {
     4UL
-  } else if name == ".rela.dyn" || sec_ty == @model.SHT_RELA {
+  } else if name == ".rela.dyn" ||
+    name == ".rela.plt" ||
+    sec_ty == @model.SHT_RELA {
     @model.ELF64_RELA_SIZE.to_uint64()
   } else if name == ".dynsym" || sec_ty == @model.SHT_DYNSYM {
     @model.ELF64_SYM_SIZE.to_uint64()
@@ -150,6 +151,12 @@ priv struct PieDynRelaRec {
   patch_off : UInt64
   r_info : UInt64
   addend : Int64
+}
+
+///|
+priv struct PieDynRelaBuild {
+  rela_dyn : Array[PieDynRelaRec]
+  rela_plt : Array[PieDynRelaRec]
 }
 
 ///|
@@ -230,13 +237,16 @@ fn pie_build_dynamic_placeholder(
   needed_count : Int,
   has_soname : Bool,
   has_rela_dyn : Bool,
+  has_rela_plt : Bool,
 ) -> Bytes {
   // DT_NEEDED[*], optional DT_SONAME, DT_STRTAB, DT_STRSZ, DT_HASH,
-  // DT_SYMTAB, DT_SYMENT, optional DT_RELA/DT_RELASZ/DT_RELAENT, DT_NULL
+  // DT_SYMTAB, DT_SYMENT, optional DT_RELA/DT_RELASZ/DT_RELAENT,
+  // optional DT_PLTRELSZ/DT_PLTREL/DT_JMPREL, DT_NULL
   let entry_count = needed_count +
     (if has_soname { 1 } else { 0 }) +
     6 +
-    (if has_rela_dyn { 3 } else { 0 })
+    (if has_rela_dyn { 3 } else { 0 }) +
+    (if has_rela_plt { 3 } else { 0 })
   let out : Array[Byte] = []
   for _ in 0..<(entry_count * 16) {
     out.push(0)
@@ -383,8 +393,9 @@ fn pie_build_dynsym(
 fn pie_build_dyn_rela_records(
   ir : @ir.LinkIr,
   dynsym_index_map : Array[Int],
-) -> Array[PieDynRelaRec] {
-  let recs : Array[PieDynRelaRec] = []
+) -> PieDynRelaBuild {
+  let rela_dyn : Array[PieDynRelaRec] = []
+  let rela_plt : Array[PieDynRelaRec] = []
   for reloc in ir.pending_relocs {
     if !reloc.has_addend {
       continue
@@ -395,14 +406,19 @@ fn pie_build_dyn_rela_records(
     } else {
       0UL
     }
-    recs.push({
+    let rec = {
       out_sec: reloc.out_sec,
       patch_off: reloc.patch_off,
       r_info: (sym_idx << 32) | reloc.rel_type.to_uint64(),
       addend: reloc.addend,
-    })
+    }
+    if ir.arch is X86_64 && reloc.rel_type == @model.R_X86_64_JUMP_SLOT {
+      rela_plt.push(rec)
+    } else {
+      rela_dyn.push(rec)
+    }
   }
-  recs
+  { rela_dyn, rela_plt }
 }
 
 ///|
@@ -518,7 +534,9 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   let exported_symbols : Array[@ir.MergedSymbol] = []
   let dynsym_index_map = [0].repeat(ir.merged_symbols.length())
   let mut has_rela_dyn = false
+  let mut has_rela_plt = false
   let mut dyn_rela_recs : Array[PieDynRelaRec] = []
+  let mut plt_rela_recs : Array[PieDynRelaRec] = []
   let mut has_dynamic = false
   let need_dynamic_for_exe = if opts.output_kind is ExecutablePie {
     opts.dynamic_linker is Some(_)
@@ -546,8 +564,11 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
       }
     }
 
-    dyn_rela_recs = pie_build_dyn_rela_records(ir, dynsym_index_map)
+    let rela_build = pie_build_dyn_rela_records(ir, dynsym_index_map)
+    dyn_rela_recs = rela_build.rela_dyn
+    plt_rela_recs = rela_build.rela_plt
     has_rela_dyn = dyn_rela_recs.length() > 0
+    has_rela_plt = plt_rela_recs.length() > 0
 
     let dyn_build = pie_build_dynstr(
       soname,
@@ -586,6 +607,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
         opts.dynamic_libs.length(),
         dyn_has_soname,
         has_rela_dyn,
+        has_rela_plt,
       ),
     })
     if has_rela_dyn {
@@ -595,6 +617,18 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
         |> Bytes::from_array
       sections.push({
         output_name: ".rela.dyn",
+        output_index: sections.length(),
+        align: 8UL,
+        bytes: rela_bytes,
+      })
+    }
+    if has_rela_plt {
+      let rela_bytes = [b'\x00'].repeat(
+          plt_rela_recs.length() * @model.ELF64_RELA_SIZE,
+        )
+        |> Bytes::from_array
+      sections.push({
+        output_name: ".rela.plt",
         output_index: sections.length(),
         align: 8UL,
         bytes: rela_bytes,
@@ -645,11 +679,15 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   let mut rela_dyn_off = 0UL
   let mut rela_dyn_addr = 0UL
   let mut rela_dyn_size = 0UL
+  let mut rela_plt_off = 0UL
+  let mut rela_plt_addr = 0UL
+  let mut rela_plt_size = 0UL
   let mut dynstr_shidx = 0
   let mut hash_shidx = 0
   let mut dynsym_shidx = 0
   let mut dynamic_shidx = 0
   let mut rela_dyn_shidx = 0
+  let mut rela_plt_shidx = 0
   let merged_sec_count = ir.merged_sections.length()
   let section_addrs = [0UL].repeat(merged_sec_count)
   for i, sec in sections {
@@ -711,6 +749,12 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
         rela_dyn_size = sec.bytes.length().to_uint64()
         rela_dyn_shidx = sh_index
       }
+      ".rela.plt" => {
+        rela_plt_off = sec_off
+        rela_plt_addr = sec_addr
+        rela_plt_size = sec.bytes.length().to_uint64()
+        rela_plt_shidx = sh_index
+      }
       _ => ()
     }
 
@@ -747,6 +791,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
         ".dynamic" | ".dynsym" => dynstr_shidx.reinterpret_as_uint()
         ".hash" => dynsym_shidx.reinterpret_as_uint()
         ".rela.dyn" => dynsym_shidx.reinterpret_as_uint()
+        ".rela.plt" => dynsym_shidx.reinterpret_as_uint()
         _ => 0
       },
       sh_info: if sec.output_name == ".dynsym" {
@@ -791,6 +836,16 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
       sh_addralign: 8UL,
     }
   }
+  if has_dynamic && rela_plt_shidx > 0 {
+    let rela_plt_hdr = shdrs[rela_plt_shidx]
+    shdrs[rela_plt_shidx] = {
+      ..rela_plt_hdr,
+      sh_type: @model.SHT_RELA,
+      sh_link: dynsym_shidx.reinterpret_as_uint(),
+      sh_entsize: @model.ELF64_RELA_SIZE.to_uint64(),
+      sh_addralign: 8UL,
+    }
+  }
 
   if has_dynamic && has_rela_dyn {
     for i, rec in dyn_rela_recs {
@@ -799,6 +854,18 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
       }
       let r_off = section_addrs[rec.out_sec] + rec.patch_off
       let entry_off = rela_dyn_off.to_int() + i * @model.ELF64_RELA_SIZE
+      pie_write_u64_le(file, entry_off, r_off)
+      pie_write_u64_le(file, entry_off + 8, rec.r_info)
+      pie_write_u64_le(file, entry_off + 16, rec.addend.reinterpret_as_uint64())
+    }
+  }
+  if has_dynamic && has_rela_plt {
+    for i, rec in plt_rela_recs {
+      if rec.out_sec < 0 || rec.out_sec >= section_addrs.length() {
+        continue
+      }
+      let r_off = section_addrs[rec.out_sec] + rec.patch_off
+      let entry_off = rela_plt_off.to_int() + i * @model.ELF64_RELA_SIZE
       pie_write_u64_le(file, entry_off, r_off)
       pie_write_u64_le(file, entry_off + 8, rec.r_info)
       pie_write_u64_le(file, entry_off + 16, rec.addend.reinterpret_as_uint64())
@@ -940,6 +1007,10 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
     let dt_rela = 7UL
     let dt_relasz = 8UL
     let dt_relaent = 9UL
+    let dt_pltrelsz = 2UL
+    let dt_pltrel = 20UL
+    let dt_jmprel = 23UL
+    let dt_rela_kind = 7UL
     let dt_strsz = 10UL
     let dt_syment = 11UL
 
@@ -983,6 +1054,18 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
         dyn_idx,
         dt_relaent,
         @model.ELF64_RELA_SIZE.to_uint64(),
+      )
+      dyn_idx += 1
+    }
+    if has_rela_plt {
+      pie_dynamic_set_entry(
+        file, dynamic_off, dyn_idx, dt_pltrelsz, rela_plt_size,
+      )
+      dyn_idx += 1
+      pie_dynamic_set_entry(file, dynamic_off, dyn_idx, dt_pltrel, dt_rela_kind)
+      dyn_idx += 1
+      pie_dynamic_set_entry(
+        file, dynamic_off, dyn_idx, dt_jmprel, rela_plt_addr,
       )
       dyn_idx += 1
     }

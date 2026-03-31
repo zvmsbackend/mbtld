@@ -395,6 +395,95 @@ test "write_pie_or_shared emits rela.dyn and DT_RELA tags" {
 }
 
 ///|
+test "write_pie_or_shared emits rela.plt and DT_JMPREL tags" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 8UL, bytes: b"\x90\xC3" },
+      { output_name: ".data", output_index: 1, align: 8UL, bytes: b"\x00\x00" },
+    ],
+    merged_symbols: [
+      {
+        name: "puts",
+        output_sec: -1,
+        output_value: 0UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+    pending_relocs: [
+      {
+        out_sec: 1,
+        patch_off: 0UL,
+        rel_type: @model.R_X86_64_JUMP_SLOT,
+        target_sym: 0,
+        addend: 0L,
+        has_addend: true,
+      },
+    ],
+  }
+
+  let artifact = write_pie_or_shared(
+    ir,
+    pie_test_opts_with_libs(SharedLibrary, ["libc.so.6"]),
+  )
+
+  let e_shoff = pie_read_u64_le(artifact.bytes, 40).to_int()
+  let e_shnum = pie_read_u16_le(artifact.bytes, 60).to_int()
+  let sh_entsize = pie_read_u16_le(artifact.bytes, 58).to_int()
+
+  let mut rela_off = 0UL
+  let mut rela_size = 0UL
+  let mut rela_entsize = 0UL
+  for i in 0..<e_shnum {
+    let sh_off = e_shoff + i * sh_entsize
+    let sh_type = pie_read_u32_le(artifact.bytes, sh_off + 4)
+    if sh_type == @model.SHT_RELA {
+      rela_off = pie_read_u64_le(artifact.bytes, sh_off + 24)
+      rela_size = pie_read_u64_le(artifact.bytes, sh_off + 32)
+      rela_entsize = pie_read_u64_le(artifact.bytes, sh_off + 56)
+    }
+  }
+
+  inspect(rela_size, content="24")
+  inspect(rela_entsize, content="24")
+
+  let rela_entry_off = rela_off.to_int()
+  inspect(pie_read_u64_le(artifact.bytes, rela_entry_off), content="296")
+  inspect(
+    pie_read_u64_le(artifact.bytes, rela_entry_off + 8),
+    content="4294967303",
+  )
+  inspect(pie_read_u64_le(artifact.bytes, rela_entry_off + 16), content="0")
+
+  let dyn_off = pie_read_u64_le(artifact.bytes, 184).to_int()
+  let mut has_dt_pltrelsz = false
+  let mut has_dt_pltrel = false
+  let mut has_dt_jmprel = false
+  for i in 0..<16 {
+    let tag = pie_read_u64_le(artifact.bytes, dyn_off + i * 16)
+    let val = pie_read_u64_le(artifact.bytes, dyn_off + i * 16 + 8)
+    if tag == 2UL {
+      has_dt_pltrelsz = val == 24UL
+    }
+    if tag == 20UL {
+      has_dt_pltrel = val == 7UL
+    }
+    if tag == 23UL {
+      has_dt_jmprel = val > 0UL
+    }
+    if tag == 0UL {
+      break
+    }
+  }
+
+  inspect(has_dt_pltrelsz, content="true")
+  inspect(has_dt_pltrel, content="true")
+  inspect(has_dt_jmprel, content="true")
+}
+
+///|
 test "write_pie_or_shared emits dynsym exported symbols" {
   let ir = {
     ..pie_mk_ir(b"\x7fELF"),

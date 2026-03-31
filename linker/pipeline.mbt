@@ -27,103 +27,130 @@ enum DiagLevel {
 } derive(Show, Eq)
 
 ///|
+fn Diagnostic::new(
+  level : DiagLevel,
+  code : String,
+  message : String,
+  file? : String,
+  section? : String,
+  symbol? : String,
+) -> Diagnostic {
+  { level, code, message, file, section, symbol }
+}
+
+///|
+fn first_input_file(inputs : Array[@ir.InputObject]) -> String? {
+  inputs.get(0).map(inp => inp.path)
+}
+
+///|
 /// Run linking pipeline
 pub fn run_pipeline(
   inputs : Array[@ir.InputObject],
   opts : @ir.LinkOptions,
 ) -> PipelineResult raise @ir.LinkError {
   let diagnostics : Array[Diagnostic] = []
+  let first_file = first_input_file(inputs)
+
   if opts.verbose {
-    diagnostics.push({
-      level: Info,
-      code: "PIPELINE_INFO",
-      message: "running linker pipeline",
-      file: None,
-      section: None,
-      symbol: None,
-    })
+    diagnostics.push(
+      Diagnostic::new(
+        Info,
+        "PIPELINE_INFO",
+        "running linker pipeline",
+        file?=first_file,
+      ),
+    )
   }
   if inputs.length() == 0 {
-    diagnostics.push({
-      level: Error,
-      code: "PIPELINE_EMPTY_INPUT",
-      message: "no input objects supplied",
-      file: None,
-      section: None,
-      symbol: None,
-    })
+    diagnostics.push(
+      Diagnostic::new(
+        Error,
+        "PIPELINE_EMPTY_INPUT",
+        "no input objects supplied",
+        file="<cli>",
+      ),
+    )
   }
   if opts.no_default_lib {
-    diagnostics.push({
-      level: Warning,
-      code: "PIPELINE_NO_DEFAULT_LIB",
-      message: "default libraries are disabled",
-      file: None,
-      section: None,
-      symbol: None,
-    })
+    diagnostics.push(
+      Diagnostic::new(
+        Warning,
+        "PIPELINE_NO_DEFAULT_LIB",
+        "default libraries are disabled",
+        file="<options>",
+      ),
+    )
   }
 
   let ir = build_ir(inputs, opts)
-  diagnostics.push({
-    level: Info,
-    code: "PIPELINE_INPUTS",
-    message: "inputs=\{inputs.length()}",
-    file: None,
-    section: None,
-    symbol: None,
-  })
-  diagnostics.push({
-    level: Info,
-    code: "PIPELINE_MERGED_SECTIONS",
-    message: "merged_sections=\{ir.merged_sections.length()}",
-    file: None,
-    section: None,
-    symbol: None,
-  })
-  diagnostics.push({
-    level: Info,
-    code: "PIPELINE_MERGED_SYMBOLS",
-    message: "merged_symbols=\{ir.merged_symbols.length()}",
-    file: None,
-    section: None,
-    symbol: None,
-  })
-  diagnostics.push({
-    level: Info,
-    code: "PIPELINE_PENDING_RELOCS",
-    message: "pending_relocs=\{ir.pending_relocs.length()}",
-    file: None,
-    section: None,
-    symbol: None,
-  })
+  diagnostics.push(
+    Diagnostic::new(
+      Info,
+      "PIPELINE_INPUTS",
+      "inputs=\{inputs.length()}",
+      file?=first_file,
+    ),
+  )
+  diagnostics.push(
+    Diagnostic::new(
+      Info,
+      "PIPELINE_MERGED_SECTIONS",
+      "merged_sections=\{ir.merged_sections.length()}",
+      file?=first_file,
+    ),
+  )
+  diagnostics.push(
+    Diagnostic::new(
+      Info,
+      "PIPELINE_MERGED_SYMBOLS",
+      "merged_symbols=\{ir.merged_symbols.length()}",
+      file?=first_file,
+    ),
+  )
+  diagnostics.push(
+    Diagnostic::new(
+      Info,
+      "PIPELINE_PENDING_RELOCS",
+      "pending_relocs=\{ir.pending_relocs.length()}",
+      file?=first_file,
+    ),
+  )
 
   if ir.merged_sections.length() == 0 {
-    diagnostics.push({
-      level: Warning,
-      code: "PIPELINE_NO_SECTIONS",
-      message: "no merged sections were produced",
-      file: None,
-      section: None,
-      symbol: None,
-    })
+    diagnostics.push(
+      Diagnostic::new(
+        Warning,
+        "PIPELINE_NO_SECTIONS",
+        "no merged sections were produced",
+        file?=first_file,
+      ),
+    )
   }
 
   let mut unresolved_symbols = 0
   for sym in ir.merged_symbols {
     if sym.output_sec < 0 {
       unresolved_symbols += 1
+      diagnostics.push(
+        Diagnostic::new(
+          Warning,
+          "PIPELINE_UNRESOLVED_SYMBOL",
+          "unresolved symbol",
+          file?=first_file,
+        ),
+      )
     }
   }
   if unresolved_symbols > 0 {
-    diagnostics.push({
-      level: Warning,
-      code: "PIPELINE_UNRESOLVED_SYMBOLS",
-      message: "unresolved_symbols=\{unresolved_symbols}",
-      file: None,
-      section: None,
-      symbol: None,
-    })
+    diagnostics.push(
+      Diagnostic::new(
+        Warning,
+        "PIPELINE_UNRESOLVED_SYMBOLS",
+        "unresolved_symbols=\{unresolved_symbols}",
+        file?=first_file,
+      ),
+    )
   }
 
   let ir = @resolve.resolve_symbols(ir, opts) catch { e => raise Resolve(e) }

@@ -57,7 +57,19 @@ pub fn run_cli(args : Array[String]) -> Int {
 ///|
 fn format_diag(diag : @linker.Diagnostic) -> String {
   let level = diag.level.to_string()
-  "[\{level}] \{diag.code}: \{diag.message}"
+  let file_part = match diag.file {
+    Some(f) => " file=\{f}"
+    None => ""
+  }
+  let sec_part = match diag.section {
+    Some(s) => " section=\{s}"
+    None => ""
+  }
+  let sym_part = match diag.symbol {
+    Some(s) => " symbol=\{s}"
+    None => ""
+  }
+  "[\{level}] \{diag.code}: \{diag.message}\{file_part}\{sec_part}\{sym_part}"
 }
 
 ///|

@@ -47,6 +47,7 @@ fn pie_infer_sh_flags(name : String) -> UInt64 {
     @model.SHF_ALLOC | @model.SHF_EXECINSTR
   } else {
     match name {
+      ".interp" => @model.SHF_ALLOC
       ".hash" => @model.SHF_ALLOC
       ".dynsym" => @model.SHF_ALLOC
       ".dynstr" => @model.SHF_ALLOC
@@ -211,6 +212,16 @@ fn pie_output_basename(path : String) -> String {
 }
 
 ///|
+fn pie_build_interp(path : String) -> Bytes {
+  let out : Array[Byte] = []
+  for ch in path {
+    out.push(Char::to_int(ch).to_byte())
+  }
+  out.push(0)
+  Bytes::from_array(out)
+}
+
+///|
 fn pie_build_dynamic_placeholder(
   needed_count : Int,
   has_soname : Bool,
@@ -361,6 +372,24 @@ fn pie_build_dynsym(
 }
 
 ///|
+fn pie_resolve_entry_addr(
+  ir : @ir.LinkIr,
+  opts : @ir.LinkOptions,
+  section_addrs : Array[UInt64],
+) -> UInt64 {
+  if opts.entry == "" {
+    return 0UL
+  }
+  let found = ir.merged_symbols.iter().find_first(sym => sym.name == opts.entry)
+  if found is Some(sym) {
+    if sym.output_sec >= 0 && sym.output_sec < section_addrs.length() {
+      return section_addrs[sym.output_sec] + sym.output_value
+    }
+  }
+  0UL
+}
+
+///|
 priv struct PieLoadRange {
   has_alloc : Bool
   file_start : UInt64
@@ -422,17 +451,35 @@ fn pie_extend_load_range(
 ///|
 fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   let sections = ir.merged_sections
+  let mut has_interp = false
+  if opts.output_kind is @ir.ExecutablePie {
+    if opts.dynamic_linker is Some(ld) && ld != "" {
+      has_interp = true
+      sections.push({
+        output_name: ".interp",
+        output_index: sections.length(),
+        align: 1UL,
+        bytes: pie_build_interp(ld),
+      })
+    }
+  }
+
   let mut dyn_needed_offsets : Array[UInt64] = []
   let mut dyn_soname_offset = 0UL
   let mut dyn_has_soname = false
   let exported_symbols : Array[@ir.MergedSymbol] = []
   let mut has_dynamic = false
-  let soname = if opts.output_kind == @ir.SharedLibrary && opts.output != "" {
+  let need_dynamic_for_exe = if opts.output_kind is ExecutablePie {
+    opts.dynamic_linker is Some(_)
+  } else {
+    false
+  }
+  let soname = if opts.output_kind is SharedLibrary && opts.output != "" {
     opts.output |> pie_output_basename |> Some
   } else {
     None
   }
-  if opts.dynamic_libs.length() > 0 || soname is Some(_) {
+  if opts.dynamic_libs.length() > 0 || soname is Some(_) || need_dynamic_for_exe {
     for sym in ir.merged_symbols {
       if pie_exportable_symbol(sym) {
         exported_symbols.push(sym)
@@ -497,7 +544,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
 
   let file : Array[Byte] = []
   let e_phoff = @model.ELF64_EHDR_SIZE.to_uint64()
-  let max_ph_count = 3
+  let max_ph_count = 4
   let ph_size_total = @model.ELF64_PHDR_SIZE * max_ph_count
   let data_start = @model.ELF64_EHDR_SIZE + ph_size_total
 
@@ -511,6 +558,9 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   let mut rw_range = pie_empty_load_range()
   let mut dynstr_addr = 0UL
   let mut dynstr_size = 0UL
+  let mut interp_off = 0UL
+  let mut interp_addr = 0UL
+  let mut interp_size = 0UL
   let mut hash_addr = 0UL
   let mut dynsym_addr = 0UL
   let mut dynamic_off = 0UL
@@ -520,6 +570,8 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   let mut hash_shidx = 0
   let mut dynsym_shidx = 0
   let mut dynamic_shidx = 0
+  let merged_sec_count = ir.merged_sections.length()
+  let section_addrs = [0UL].repeat(merged_sec_count)
   for i in 0..<sections.length() {
     let sec = sections[i]
     let sec_ty = pie_infer_sh_type(sec.output_name)
@@ -529,6 +581,9 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
 
     vcursor = pie_align_up_int(vcursor, sec_align)
     let sec_addr = vcursor.to_uint64()
+    if i < merged_sec_count {
+      section_addrs[i] = sec_addr
+    }
 
     let mut sec_off = 0UL
     if sec_ty != @model.SHT_NOBITS {
@@ -547,6 +602,11 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
 
     let sh_index = i + 1
     match sec.output_name {
+      ".interp" => {
+        interp_off = sec_off
+        interp_addr = sec_addr
+        interp_size = sec.bytes.length().to_uint64()
+      }
       ".dynsym" => {
         dynsym_addr = sec_addr
         dynsym_shidx = sh_index
@@ -687,7 +747,8 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   pie_write_u16_le(file, 16, @model.ET_DYN)
   pie_write_u16_le(file, 18, pie_machine_from_arch(ir.arch))
   pie_write_u32_le(file, 20, 1)
-  pie_write_u64_le(file, 24, 0UL)
+  let entry_addr = pie_resolve_entry_addr(ir, opts, section_addrs)
+  pie_write_u64_le(file, 24, entry_addr)
   pie_write_u64_le(file, 32, e_phoff)
   pie_write_u64_le(file, 40, e_shoff)
   pie_write_u32_le(file, 48, 0)
@@ -696,6 +757,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
 
   let ph_count = (if rx_range.has_alloc { 1 } else { 0 }) +
     (if rw_range.has_alloc { 1 } else { 0 }) +
+    (if has_interp { 1 } else { 0 }) +
     (if has_dynamic { 1 } else { 0 })
   pie_write_u16_le(file, 56, ph_count.to_uint16())
   pie_write_u16_le(file, 58, @model.ELF64_SHDR_SIZE.to_uint16())
@@ -730,6 +792,19 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
     pie_write_u64_le(file, ph_off + 32, file_end - file_start)
     pie_write_u64_le(file, ph_off + 40, rw_range.mem_end - rw_range.mem_start)
     pie_write_u64_le(file, ph_off + 48, 0x1000UL)
+    ph_idx += 1
+  }
+
+  if has_interp {
+    let ph_off = e_phoff.to_int() + ph_idx * @model.ELF64_PHDR_SIZE
+    pie_write_u32_le(file, ph_off, @model.PT_INTERP)
+    pie_write_u32_le(file, ph_off + 4, @model.PF_R)
+    pie_write_u64_le(file, ph_off + 8, interp_off)
+    pie_write_u64_le(file, ph_off + 16, interp_addr)
+    pie_write_u64_le(file, ph_off + 24, interp_addr)
+    pie_write_u64_le(file, ph_off + 32, interp_size)
+    pie_write_u64_le(file, ph_off + 40, interp_size)
+    pie_write_u64_le(file, ph_off + 48, 1UL)
     ph_idx += 1
   }
 

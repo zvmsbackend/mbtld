@@ -117,6 +117,64 @@ test "write_pie_or_shared emits merged payload" {
 }
 
 ///|
+test "write_pie_or_shared emits interp for executable pie" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 1UL, bytes: b"\xaa" },
+      { output_name: ".data", output_index: 1, align: 1UL, bytes: b"\xbb" },
+    ],
+  }
+  let opts = {
+    ..pie_test_opts(ExecutablePie),
+    dynamic_linker: Some("/lib64/ld-linux-x86-64.so.2"),
+  }
+
+  let artifact = write_pie_or_shared(ir, opts) catch {
+    _ => abort("unexpected writer error")
+  }
+
+  inspect(artifact.bytes[56], content="b'\\x04'")
+  inspect(artifact.bytes[176], content="b'\\x03'")
+  let interp_off = pie_read_u64_le(artifact.bytes, 184).to_int()
+  inspect(artifact.bytes[interp_off], content="b'\\x2F'")
+  inspect(artifact.bytes[232], content="b'\\x02'")
+}
+
+///|
+test "write_pie_or_shared writes e_entry from entry symbol" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      {
+        output_name: ".text",
+        output_index: 0,
+        align: 1UL,
+        bytes: b"\x90\x90\xC3",
+      },
+    ],
+    merged_symbols: [
+      {
+        name: "_start",
+        output_sec: 0,
+        output_value: 1UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+  }
+  let opts = { ..pie_test_opts(ExecutablePie), entry: "_start" }
+
+  let artifact = write_pie_or_shared(ir, opts) catch {
+    _ => abort("unexpected writer error")
+  }
+
+  // data_start is fixed at ELF64_EHDR_SIZE + 4 * ELF64_PHDR_SIZE = 0x120.
+  inspect(pie_read_u64_le(artifact.bytes, 24), content="289")
+}
+
+///|
 test "write_pie_or_shared emits minimal dynamic metadata" {
   let ir = {
     ..pie_mk_ir(b"\x7fELF"),

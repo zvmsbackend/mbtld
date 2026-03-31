@@ -310,6 +310,7 @@ fn pie_build_dynamic_placeholder(
   has_rela_dyn : Bool,
   has_rela_plt : Bool,
   has_pltgot : Bool,
+  has_flags_1 : Bool,
 ) -> Bytes {
   // DT_NEEDED[*], optional DT_SONAME, DT_STRTAB, DT_STRSZ, DT_HASH,
   // DT_SYMTAB, DT_SYMENT, optional DT_RELA/DT_RELASZ/DT_RELAENT,
@@ -319,7 +320,8 @@ fn pie_build_dynamic_placeholder(
     6 +
     (if has_rela_dyn { 3 } else { 0 }) +
     (if has_rela_plt { 3 } else { 0 }) +
-    (if has_pltgot { 1 } else { 0 })
+    (if has_pltgot { 1 } else { 0 }) +
+    (if has_flags_1 { 1 } else { 0 })
   let out : Array[Byte] = []
   for _ in 0..<(entry_count * 16) {
     out.push(0)
@@ -611,6 +613,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   let mut has_rela_dyn = false
   let mut has_rela_plt = false
   let mut has_pltgot = false
+  let mut has_flags_1 = false
   let mut dyn_rela_recs : Array[PieDynRelaRec] = []
   let mut plt_rela_recs : Array[PieDynRelaRec] = []
   let mut has_dynamic = false
@@ -646,6 +649,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
     has_rela_dyn = dyn_rela_recs.length() > 0
     has_rela_plt = plt_rela_recs.length() > 0
     has_pltgot = has_rela_plt
+    has_flags_1 = opts.output_kind is ExecutablePie
 
     let dyn_build = pie_build_dynstr(
       soname,
@@ -708,6 +712,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
         has_rela_dyn,
         has_rela_plt,
         has_pltgot,
+        has_flags_1,
       ),
     })
     if has_rela_dyn {
@@ -883,7 +888,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
           sec_addr,
           sec.bytes.length().to_uint64(),
         )
-        if sec.output_name == ".got.plt" {
+        if sec.output_name == ".got.plt" || sec.output_name == ".dynamic" {
           relro_range = pie_extend_load_range(
             relro_range,
             sec_ty,
@@ -919,12 +924,10 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
         ".rela.plt" => dynsym_shidx.reinterpret_as_uint()
         _ => 0
       },
-      sh_info: if sec.output_name == ".dynsym" {
-        1
-      } else if sec.output_name == ".rela.plt" {
-        got_plt_shidx.reinterpret_as_uint()
-      } else {
-        0
+      sh_info: match sec.output_name {
+        ".dynsym" => 1
+        ".rela.plt" => got_plt_shidx.reinterpret_as_uint()
+        _ => 0
       },
       sh_addralign: sec_align,
       sh_entsize: sec_entsize,
@@ -1096,11 +1099,12 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   pie_write_u16_le(file, 52, @model.ELF64_EHDR_SIZE.to_uint16())
   pie_write_u16_le(file, 54, @model.ELF64_PHDR_SIZE.to_uint16())
 
-  let ph_count = (if rx_range.has_alloc { 1 } else { 0 }) +
+  let base_ph_count = (if rx_range.has_alloc { 1 } else { 0 }) +
     (if rw_range.has_alloc { 1 } else { 0 }) +
     (if has_interp { 1 } else { 0 }) +
-    (if has_dynamic { 1 } else { 0 }) +
-    (if relro_range.has_alloc { 1 } else { 0 })
+    (if has_dynamic { 1 } else { 0 })
+  let include_relro = relro_range.has_alloc && base_ph_count < max_ph_count
+  let ph_count = base_ph_count + (if include_relro { 1 } else { 0 })
   pie_write_u16_le(file, 56, ph_count.to_uint16())
   pie_write_u16_le(file, 58, @model.ELF64_SHDR_SIZE.to_uint16())
   pie_write_u16_le(file, 60, shdrs.length().to_uint16())
@@ -1163,7 +1167,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
     ph_idx += 1
   }
 
-  if relro_range.has_alloc {
+  if include_relro {
     let ph_off = e_phoff.to_int() + ph_idx * @model.ELF64_PHDR_SIZE
     let file_start = relro_range.file_start
     let file_end = @cmp.maximum(relro_range.file_end, file_start)
@@ -1197,6 +1201,8 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
     let dt_pltrel = 20UL
     let dt_jmprel = 23UL
     let dt_rela_kind = 7UL
+    let dt_flags_1 = 0x6ffffffbUL
+    let df_1_pie = 0x08000000UL
     let dt_strsz = 10UL
     let dt_syment = 11UL
 
@@ -1257,6 +1263,10 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
     }
     if has_pltgot {
       pie_dynamic_set_entry(file, dynamic_off, dyn_idx, dt_pltgot, got_plt_addr)
+      dyn_idx += 1
+    }
+    if has_flags_1 {
+      pie_dynamic_set_entry(file, dynamic_off, dyn_idx, dt_flags_1, df_1_pie)
       dyn_idx += 1
     }
     pie_dynamic_set_entry(file, dynamic_off, dyn_idx, dt_null, 0UL)

@@ -138,6 +138,49 @@ test "write_pie_or_shared emits interp for executable pie" {
 }
 
 ///|
+test "write_pie_or_shared emits DT_FLAGS_1 for executable pie" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 1UL, bytes: b"\xaa" },
+      { output_name: ".data", output_index: 1, align: 1UL, bytes: b"\xbb" },
+    ],
+  }
+  let opts = {
+    ..pie_test_opts(ExecutablePie),
+    dynamic_linker: Some("/lib64/ld-linux-x86-64.so.2"),
+  }
+
+  let artifact = write_pie_or_shared(ir, opts)
+
+  let phnum = pie_read_u16_le(artifact.bytes, 56).to_int()
+  let phoff = pie_read_u64_le(artifact.bytes, 32).to_int()
+  let phentsize = pie_read_u16_le(artifact.bytes, 54).to_int()
+
+  let mut dynamic_off = 0UL
+  for i in 0..<phnum {
+    let p_off = phoff + i * phentsize
+    if pie_read_u32_le(artifact.bytes, p_off) == @model.PT_DYNAMIC {
+      dynamic_off = pie_read_u64_le(artifact.bytes, p_off + 8)
+    }
+  }
+
+  let mut has_flags_1 = false
+  for i in 0..<24 {
+    let tag = pie_read_u64_le(artifact.bytes, dynamic_off.to_int() + i * 16)
+    let val = pie_read_u64_le(artifact.bytes, dynamic_off.to_int() + i * 16 + 8)
+    if tag == 0x6ffffffbUL {
+      has_flags_1 = val == 0x08000000UL
+    }
+    if tag == 0UL {
+      break
+    }
+  }
+
+  inspect(has_flags_1, content="true")
+}
+
+///|
 test "write_pie_or_shared writes e_entry from entry symbol" {
   let ir = {
     ..pie_mk_ir(b"\x7fELF"),
@@ -281,8 +324,8 @@ test "write_pie_or_shared emits minimal dynamic metadata" {
     pie_test_opts_with_libs(SharedLibrary, ["libc.so.6"]),
   )
 
-  // e_phnum=3 (RX, RW, PT_DYNAMIC)
-  inspect(artifact.bytes[56], content="b'\\x03'")
+  // e_phnum=4 (RX, RW, PT_DYNAMIC, PT_GNU_RELRO)
+  inspect(artifact.bytes[56], content="b'\\x04'")
   // Third PHDR type/flags
   inspect(artifact.bytes[176], content="b'\\x02'")
   inspect(artifact.bytes[180], content="b'\\x06'")
@@ -613,6 +656,8 @@ test "write_pie_or_shared emits got.plt and DT_PLTGOT tag" {
   let mut got_plt_addr = 0UL
   let mut got_plt_size = 0UL
   let mut got_plt_off = 0UL
+  let mut dynamic_off = 0UL
+  let mut dynamic_size = 0UL
   let mut dynamic_addr = 0UL
   for i in 0..<e_shnum {
     let sh_off = e_shoff + i * sh_entsize
@@ -630,6 +675,8 @@ test "write_pie_or_shared emits got.plt and DT_PLTGOT tag" {
       got_plt_size = sh_size
     }
     if sh_type == @model.SHT_DYNAMIC {
+      dynamic_off = sh_off_val
+      dynamic_size = sh_size
       dynamic_addr = sh_addr
     }
   }
@@ -646,10 +693,14 @@ test "write_pie_or_shared emits got.plt and DT_PLTGOT tag" {
   let phoff = pie_read_u64_le(artifact.bytes, 32).to_int()
   let phentsize = pie_read_u16_le(artifact.bytes, 54).to_int()
   let mut has_relro_phdr = false
+  let mut relro_off = 0UL
+  let mut relro_filesz = 0UL
   for i in 0..<phnum {
     let p_off = phoff + i * phentsize
     if pie_read_u32_le(artifact.bytes, p_off) == @model.PT_GNU_RELRO {
       has_relro_phdr = true
+      relro_off = pie_read_u64_le(artifact.bytes, p_off + 8)
+      relro_filesz = pie_read_u64_le(artifact.bytes, p_off + 32)
     }
   }
   for i in 0..<20 {
@@ -664,6 +715,16 @@ test "write_pie_or_shared emits got.plt and DT_PLTGOT tag" {
   }
   inspect(has_dt_pltgot, content="true")
   inspect(has_relro_phdr, content="true")
+  inspect(relro_off <= dynamic_off, content="true")
+  inspect(
+    relro_off + relro_filesz >= dynamic_off + dynamic_size,
+    content="true",
+  )
+  inspect(relro_off <= got_plt_off, content="true")
+  inspect(
+    relro_off + relro_filesz >= got_plt_off + got_plt_size,
+    content="true",
+  )
 }
 
 ///|

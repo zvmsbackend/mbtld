@@ -71,7 +71,9 @@ test "write_pie_or_shared emits merged payload" {
     _ => abort("unexpected writer error")
   }
 
-  inspect(artifact.bytes, content="b\"\\xaa\\xbb\\xcc\"")
+  inspect(artifact.bytes[0:4].to_bytes(), content="b\"\\x7fELF\"")
+  inspect(artifact.bytes[16], content="b'\\x03'")
+  inspect(artifact.bytes[17], content="b'\\x00'")
 }
 
 ///|

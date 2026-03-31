@@ -10,18 +10,257 @@ fn pie_align_up_int(value : Int, align : UInt64) -> Int {
 }
 
 ///|
-fn pie_serialize_merged_sections(sections : Array[@ir.MergedSection]) -> Bytes {
-  let out : Array[Byte] = []
-  for sec in sections {
-    let aligned = pie_align_up_int(out.length(), sec.align)
-    for _ in out.length()..<aligned {
-      out.push(0)
-    }
-    for b in sec.bytes {
-      out.push(b)
-    }
+fn pie_machine_from_arch(arch : @ir.Arch) -> UInt16 {
+  match arch {
+    @ir.X86_64 => @model.EM_X86_64
+    @ir.AARCH64 => @model.EM_AARCH64
+    @ir.RISCV64 => @model.EM_RISCV
+    @ir.LOONGARCH64 => @model.EM_LOONGARCH
   }
-  Bytes::from_array(out)
+}
+
+///|
+fn pie_starts_with(s : String, prefix : String) -> Bool {
+  if prefix.length() > s.length() {
+    return false
+  }
+  s[:prefix.length()].to_string() == prefix
+}
+
+///|
+fn pie_infer_sh_type(name : String) -> UInt {
+  if name == ".bss" || name == ".tbss" {
+    @model.SHT_NOBITS
+  } else if name == ".init_array" {
+    @model.SHT_INIT_ARRAY
+  } else if name == ".fini_array" {
+    @model.SHT_FINI_ARRAY
+  } else if name == ".preinit_array" {
+    @model.SHT_PREINIT_ARRAY
+  } else {
+    @model.SHT_PROGBITS
+  }
+}
+
+///|
+fn pie_infer_sh_flags(name : String) -> UInt64 {
+  let mut flags = 0UL
+  if name == ".text" || name == ".init" || name == ".fini" {
+    flags = @model.SHF_ALLOC | @model.SHF_EXECINSTR
+  } else if name == ".rodata" {
+    flags = @model.SHF_ALLOC
+  } else {
+    flags = @model.SHF_ALLOC | @model.SHF_WRITE
+  }
+
+  if pie_starts_with(name, ".t") {
+    flags = flags | @model.SHF_TLS
+  }
+
+  flags
+}
+
+///|
+priv struct PieShdr {
+  sh_name : UInt
+  sh_type : UInt
+  sh_flags : UInt64
+  sh_addr : UInt64
+  sh_offset : UInt64
+  sh_size : UInt64
+  sh_link : UInt
+  sh_info : UInt
+  sh_addralign : UInt64
+  sh_entsize : UInt64
+}
+
+///|
+fn pie_shdr_zero() -> PieShdr {
+  {
+    sh_name: 0,
+    sh_type: 0,
+    sh_flags: 0,
+    sh_addr: 0,
+    sh_offset: 0,
+    sh_size: 0,
+    sh_link: 0,
+    sh_info: 0,
+    sh_addralign: 0,
+    sh_entsize: 0,
+  }
+}
+
+///|
+fn pie_push_u32_le(out : Array[Byte], v : UInt) -> Unit {
+  out.push((v & 0xffU).to_byte())
+  out.push(((v >> 8) & 0xffU).to_byte())
+  out.push(((v >> 16) & 0xffU).to_byte())
+  out.push(((v >> 24) & 0xffU).to_byte())
+}
+
+///|
+fn pie_push_u64_le(out : Array[Byte], v : UInt64) -> Unit {
+  out.push((v & 0xffUL).to_byte())
+  out.push(((v >> 8) & 0xffUL).to_byte())
+  out.push(((v >> 16) & 0xffUL).to_byte())
+  out.push(((v >> 24) & 0xffUL).to_byte())
+  out.push(((v >> 32) & 0xffUL).to_byte())
+  out.push(((v >> 40) & 0xffUL).to_byte())
+  out.push(((v >> 48) & 0xffUL).to_byte())
+  out.push(((v >> 56) & 0xffUL).to_byte())
+}
+
+///|
+fn pie_write_u16_le(out : Array[Byte], offset : Int, v : UInt16) -> Unit {
+  let vv = v.to_uint()
+  out[offset] = (vv & 0xffU).to_byte()
+  out[offset + 1] = ((vv >> 8) & 0xffU).to_byte()
+}
+
+///|
+fn pie_write_u32_le(out : Array[Byte], offset : Int, v : UInt) -> Unit {
+  out[offset] = (v & 0xffU).to_byte()
+  out[offset + 1] = ((v >> 8) & 0xffU).to_byte()
+  out[offset + 2] = ((v >> 16) & 0xffU).to_byte()
+  out[offset + 3] = ((v >> 24) & 0xffU).to_byte()
+}
+
+///|
+fn pie_write_u64_le(out : Array[Byte], offset : Int, v : UInt64) -> Unit {
+  out[offset] = (v & 0xffUL).to_byte()
+  out[offset + 1] = ((v >> 8) & 0xffUL).to_byte()
+  out[offset + 2] = ((v >> 16) & 0xffUL).to_byte()
+  out[offset + 3] = ((v >> 24) & 0xffUL).to_byte()
+  out[offset + 4] = ((v >> 32) & 0xffUL).to_byte()
+  out[offset + 5] = ((v >> 40) & 0xffUL).to_byte()
+  out[offset + 6] = ((v >> 48) & 0xffUL).to_byte()
+  out[offset + 7] = ((v >> 56) & 0xffUL).to_byte()
+}
+
+///|
+fn pie_build_elf64_dyn(ir : @ir.LinkIr) -> Bytes {
+  let section_names : Array[String] = []
+  for sec in ir.merged_sections {
+    section_names.push(sec.output_name)
+  }
+  section_names.push(".shstrtab")
+
+  let sh_name_offsets : Array[UInt] = []
+  let shstr : Array[Byte] = [0]
+  for name in section_names {
+    sh_name_offsets.push(shstr.length().reinterpret_as_uint())
+    for ch in name {
+      shstr.push(Char::to_int(ch).to_byte())
+    }
+    shstr.push(0)
+  }
+  let shstr_bytes = Bytes::from_array(shstr)
+
+  let shdrs : Array[PieShdr] = []
+  shdrs.push(pie_shdr_zero())
+
+  let file : Array[Byte] = []
+  for _ in 0..<@model.ELF64_EHDR_SIZE {
+    file.push(0)
+  }
+
+  let mut cursor = @model.ELF64_EHDR_SIZE
+  for i = 0; i < ir.merged_sections.length(); i = i + 1 {
+    let sec = ir.merged_sections[i]
+    let sec_ty = pie_infer_sh_type(sec.output_name)
+    let sec_flags = pie_infer_sh_flags(sec.output_name)
+    let sec_align = if sec.align == 0UL { 1UL } else { sec.align }
+
+    let mut sec_off = 0UL
+    if sec_ty != @model.SHT_NOBITS {
+      cursor = pie_align_up_int(cursor, sec_align)
+      sec_off = cursor.to_uint64()
+      for _ in file.length()..<cursor {
+        file.push(0)
+      }
+      for b in sec.bytes {
+        file.push(b)
+      }
+      cursor += sec.bytes.length()
+    }
+
+    shdrs.push({
+      sh_name: sh_name_offsets[i],
+      sh_type: sec_ty,
+      sh_flags: sec_flags,
+      sh_addr: 0,
+      sh_offset: sec_off,
+      sh_size: sec.bytes.length().to_uint64(),
+      sh_link: 0,
+      sh_info: 0,
+      sh_addralign: sec_align,
+      sh_entsize: 0,
+    })
+  }
+
+  let shstr_off = cursor.to_uint64()
+  for b in shstr_bytes {
+    file.push(b)
+  }
+  cursor += shstr_bytes.length()
+
+  shdrs.push({
+    sh_name: sh_name_offsets[section_names.length() - 1],
+    sh_type: @model.SHT_STRTAB,
+    sh_flags: 0,
+    sh_addr: 0,
+    sh_offset: shstr_off,
+    sh_size: shstr_bytes.length().to_uint64(),
+    sh_link: 0,
+    sh_info: 0,
+    sh_addralign: 1,
+    sh_entsize: 0,
+  })
+
+  cursor = pie_align_up_int(cursor, 8UL)
+  let e_shoff = cursor.to_uint64()
+  for _ in file.length()..<cursor {
+    file.push(0)
+  }
+
+  for sh in shdrs {
+    pie_push_u32_le(file, sh.sh_name)
+    pie_push_u32_le(file, sh.sh_type)
+    pie_push_u64_le(file, sh.sh_flags)
+    pie_push_u64_le(file, sh.sh_addr)
+    pie_push_u64_le(file, sh.sh_offset)
+    pie_push_u64_le(file, sh.sh_size)
+    pie_push_u32_le(file, sh.sh_link)
+    pie_push_u32_le(file, sh.sh_info)
+    pie_push_u64_le(file, sh.sh_addralign)
+    pie_push_u64_le(file, sh.sh_entsize)
+  }
+
+  file[@model.EI_MAG0] = @model.ELFMAG0
+  file[@model.EI_MAG1] = @model.ELFMAG1
+  file[@model.EI_MAG2] = @model.ELFMAG2
+  file[@model.EI_MAG3] = @model.ELFMAG3
+  file[@model.EI_CLASS] = @model.ELFCLASS64
+  file[@model.EI_DATA] = @model.ELFDATA2LSB
+  file[@model.EI_VERSION] = 1
+  file[@model.EI_OSABI] = 0
+  file[@model.EI_ABIVERSION] = 0
+
+  pie_write_u16_le(file, 16, @model.ET_DYN)
+  pie_write_u16_le(file, 18, pie_machine_from_arch(ir.arch))
+  pie_write_u32_le(file, 20, 1)
+  pie_write_u64_le(file, 24, 0UL)
+  pie_write_u64_le(file, 32, 0UL)
+  pie_write_u64_le(file, 40, e_shoff)
+  pie_write_u32_le(file, 48, 0)
+  pie_write_u16_le(file, 52, @model.ELF64_EHDR_SIZE.to_uint16())
+  pie_write_u16_le(file, 54, 0)
+  pie_write_u16_le(file, 56, 0)
+  pie_write_u16_le(file, 58, @model.ELF64_SHDR_SIZE.to_uint16())
+  pie_write_u16_le(file, 60, shdrs.length().to_uint16())
+  pie_write_u16_le(file, 62, (shdrs.length() - 1).to_uint16())
+
+  Bytes::from_array(file)
 }
 
 ///|
@@ -45,15 +284,16 @@ pub fn write_pie_or_shared(
         "no merged output sections for multi-input \{opts.output_kind.to_string()} build",
       )
     }
+    // Keep backward compatibility for minimal single-input flow.
     ir.input_objects[0].raw
   } else {
-    pie_serialize_merged_sections(ir.merged_sections)
+    pie_build_elf64_dyn(ir)
   }
 
   {
     bytes: payload,
     map_text: Some(
-      "provisional \{opts.output_kind.to_string()} payload from \{ir.merged_sections.length()} merged sections",
+      "elf64 ET_DYN payload for \{opts.output_kind.to_string()} from \{ir.merged_sections.length()} merged sections",
     ),
   }
 }

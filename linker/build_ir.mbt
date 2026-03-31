@@ -319,6 +319,7 @@ pub fn build_ir(
         rel_type: rel.rel_type,
         target_sym,
         addend: rel.addend,
+        has_addend: rel.has_addend,
       })
     }
   }

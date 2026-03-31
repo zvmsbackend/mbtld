@@ -115,10 +115,11 @@ priv struct RrSymtabBuild {
 }
 
 ///|
-priv struct RrRelaSection {
+priv struct RrRelocSection {
   name : String
   out_sec : Int
   bytes : Bytes
+  has_addend : Bool
 }
 
 ///|
@@ -223,21 +224,22 @@ fn rr_build_symtab_and_strtab(ir : @ir.LinkIr) -> RrSymtabBuild {
 }
 
 ///|
-fn rr_build_rela_sections(
+fn rr_build_reloc_sections(
   ir : @ir.LinkIr,
   sym_index_map : Array[Int],
-) -> Array[RrRelaSection] {
-  let relas : Array[RrRelaSection] = []
+) -> Array[RrRelocSection] {
+  let relocs : Array[RrRelocSection] = []
   for out_sec in 0..<ir.merged_sections.length() {
     let out_name = ir.merged_sections[out_sec].output_name
-    let mut has_reloc = false
-    let out : Array[Byte] = []
+    let out_rela : Array[Byte] = []
+    let out_rel : Array[Byte] = []
+    let mut has_rela = false
+    let mut has_rel = false
 
     for reloc in ir.pending_relocs {
       if reloc.out_sec != out_sec {
         continue
       }
-      has_reloc = true
 
       let sym_idx = if reloc.target_sym >= 0 &&
         reloc.target_sym < sym_index_map.length() {
@@ -247,31 +249,47 @@ fn rr_build_rela_sections(
       }
       let r_info = (sym_idx << 32) | reloc.rel_type.to_uint64()
 
-      rr_push_u64_le(out, reloc.patch_off)
-      rr_push_u64_le(out, r_info)
-      rr_push_u64_le(out, reloc.addend.reinterpret_as_uint64())
+      if reloc.has_addend {
+        has_rela = true
+        rr_push_u64_le(out_rela, reloc.patch_off)
+        rr_push_u64_le(out_rela, r_info)
+        rr_push_u64_le(out_rela, reloc.addend.reinterpret_as_uint64())
+      } else {
+        has_rel = true
+        rr_push_u64_le(out_rel, reloc.patch_off)
+        rr_push_u64_le(out_rel, r_info)
+      }
     }
 
-    if has_reloc {
-      relas.push({
+    if has_rela {
+      relocs.push({
         name: ".rela\{out_name}",
         out_sec,
-        bytes: Bytes::from_array(out),
+        bytes: Bytes::from_array(out_rela),
+        has_addend: true,
+      })
+    }
+    if has_rel {
+      relocs.push({
+        name: ".rel\{out_name}",
+        out_sec,
+        bytes: Bytes::from_array(out_rel),
+        has_addend: false,
       })
     }
   }
-  relas
+  relocs
 }
 
 ///|
 fn rr_build_elf64_relocatable(ir : @ir.LinkIr) -> Bytes {
   let sym_build = rr_build_symtab_and_strtab(ir)
-  let rela_sections = rr_build_rela_sections(ir, sym_build.sym_index_map)
+  let reloc_sections = rr_build_reloc_sections(ir, sym_build.sym_index_map)
   let section_names : Array[String] = ir.merged_sections.map(sec => {
     sec.output_name
   })
-  for rela in rela_sections {
-    section_names.push(rela.name)
+  for relsec in reloc_sections {
+    section_names.push(relsec.name)
   }
   section_names.push(".symtab")
   section_names.push(".strtab")
@@ -326,33 +344,41 @@ fn rr_build_elf64_relocatable(ir : @ir.LinkIr) -> Bytes {
     })
   }
 
-  let symtab_idx = 1 + ir.merged_sections.length() + rela_sections.length()
+  let symtab_idx = 1 + ir.merged_sections.length() + reloc_sections.length()
   let strtab_idx = symtab_idx + 1
-  let rela_name_base = ir.merged_sections.length()
+  let rel_name_base = ir.merged_sections.length()
 
-  for i in 0..<rela_sections.length() {
-    let rela = rela_sections[i]
+  for i in 0..<reloc_sections.length() {
+    let relsec = reloc_sections[i]
     cursor = rr_align_up_int(cursor, 8UL)
-    let rela_off = cursor.to_uint64()
+    let rel_off = cursor.to_uint64()
     for _ in file.length()..<cursor {
       file.push(0)
     }
-    for b in rela.bytes {
+    for b in relsec.bytes {
       file.push(b)
     }
-    cursor += rela.bytes.length()
+    cursor += relsec.bytes.length()
 
     shdrs.push({
-      sh_name: sh_name_offsets[rela_name_base + i],
-      sh_type: @model.SHT_RELA,
+      sh_name: sh_name_offsets[rel_name_base + i],
+      sh_type: if relsec.has_addend {
+        @model.SHT_RELA
+      } else {
+        @model.SHT_REL
+      },
       sh_flags: 0,
       sh_addr: 0,
-      sh_offset: rela_off,
-      sh_size: rela.bytes.length().to_uint64(),
+      sh_offset: rel_off,
+      sh_size: relsec.bytes.length().to_uint64(),
       sh_link: symtab_idx.reinterpret_as_uint(),
-      sh_info: (rela.out_sec + 1).reinterpret_as_uint(),
+      sh_info: (relsec.out_sec + 1).reinterpret_as_uint(),
       sh_addralign: 8UL,
-      sh_entsize: @model.ELF64_RELA_SIZE.to_uint64(),
+      sh_entsize: if relsec.has_addend {
+        @model.ELF64_RELA_SIZE.to_uint64()
+      } else {
+        @model.ELF64_REL_SIZE.to_uint64()
+      },
     })
   }
 
@@ -366,7 +392,7 @@ fn rr_build_elf64_relocatable(ir : @ir.LinkIr) -> Bytes {
   }
   cursor += sym_build.symtab.length()
 
-  let symtab_name_idx = ir.merged_sections.length() + rela_sections.length()
+  let symtab_name_idx = ir.merged_sections.length() + reloc_sections.length()
   let strtab_name_idx = symtab_name_idx + 1
   let shstrtab_name_idx = strtab_name_idx + 1
 

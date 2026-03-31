@@ -141,6 +141,7 @@ pub(all) struct PendingReloc {
   rel_type : UInt
   target_sym : Int
   addend : Int64
+  has_addend : Bool
 } derive(Show)
 
 ///|

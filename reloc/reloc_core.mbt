@@ -26,7 +26,8 @@ pub fn apply_relocations(
       raise BadRelocTarget("invalid section index \{pending.out_sec}")
     }
 
-    if pending.target_sym < 0 || pending.target_sym >= ir.merged_symbols.length() {
+    if pending.target_sym < 0 ||
+      pending.target_sym >= ir.merged_symbols.length() {
       if opts.output_kind == @ir.Relocatable {
         continue
       }
@@ -58,16 +59,10 @@ pub fn apply_relocations(
       _ => raise UnsupportedRelocType(pending.rel_type)
     }
 
-    sections[pending.out_sec] = {
-      ..sec,
-      bytes: patched,
-    }
+    sections[pending.out_sec] = { ..sec, bytes: patched }
   }
 
-  {
-    ..ir,
-    merged_sections: sections,
-  }
+  { ..ir, merged_sections: sections }
 }
 
 ///|

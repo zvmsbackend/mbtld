@@ -1,3 +1,4 @@
 import {
   "sennenki/mbtld/ir",
+  "sennenki/mbtld/elf/model",
 }

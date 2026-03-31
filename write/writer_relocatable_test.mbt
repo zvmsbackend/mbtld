@@ -72,18 +72,8 @@ test "write_relocatable emits merged section payload" {
   let ir = {
     ..mk_ir([mk_input("a.o", raw)]),
     merged_sections: [
-      {
-        output_name: ".text",
-        output_index: 0,
-        align: 1UL,
-        bytes: b"\x01\x02",
-      },
-      {
-        output_name: ".data",
-        output_index: 1,
-        align: 1UL,
-        bytes: b"\x03",
-      },
+      { output_name: ".text", output_index: 0, align: 1UL, bytes: b"\x01\x02" },
+      { output_name: ".data", output_index: 1, align: 1UL, bytes: b"\x03" },
     ],
   }
 
@@ -91,15 +81,14 @@ test "write_relocatable emits merged section payload" {
     _ => abort("unexpected writer error")
   }
 
-  inspect(artifact.bytes, content="b\"\\x01\\x02\\x03\"")
+  inspect(artifact.bytes[0:4].to_bytes(), content="b\"\\x7fELF\"")
+  inspect(artifact.bytes[16], content="b'\\x01'")
+  inspect(artifact.bytes[17], content="b'\\x00'")
 }
 
 ///|
 test "write_relocatable fails on multi-input without merged sections" {
-  let ir = mk_ir([
-    mk_input("a.o", b"A"),
-    mk_input("b.o", b"B"),
-  ])
+  let ir = mk_ir([mk_input("a.o", b"A"), mk_input("b.o", b"B")])
 
   let mut msg = ""
   try {
@@ -109,5 +98,8 @@ test "write_relocatable fails on multi-input without merged sections" {
     LayoutFailure(m) => msg = m
     _ => abort("unexpected writer error type")
   }
-  inspect(msg, content="no merged output sections for multi-input relocatable build")
+  inspect(
+    msg,
+    content="no merged output sections for multi-input relocatable build",
+  )
 }

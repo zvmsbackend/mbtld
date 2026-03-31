@@ -13,6 +13,8 @@ pub fn from_parsed_object(@read.ParsedObject) -> @ir.InputObject
 
 pub fn link(@ir.LinkOptions) -> @ir.LinkArtifact raise @ir.LinkError
 
+pub fn link_with_diagnostics(@ir.LinkOptions) -> LinkExecution raise @ir.LinkError
+
 pub fn run_pipeline(Array[@ir.InputObject], @ir.LinkOptions) -> PipelineResult raise @ir.LinkError
 
 // Errors
@@ -27,6 +29,11 @@ pub struct Diagnostic {
   file : String?
   section : String?
   symbol : String?
+} derive(Show)
+
+pub struct LinkExecution {
+  artifact : @ir.LinkArtifact
+  diagnostics : Array[Diagnostic]
 } derive(Show)
 
 pub struct PipelineResult {

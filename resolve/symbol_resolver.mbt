@@ -16,7 +16,8 @@ pub fn resolve_symbols(
     }
     for j = i + 1; j < symbol_count; j = j + 1 {
       let right = ir.merged_symbols[j]
-      if right.binding == @ir.Global && right.output_sec >= 0 &&
+      if right.binding == @ir.Global &&
+        right.output_sec >= 0 &&
         right.name == left.name {
         raise MultipleDefinition(left.name)
       }

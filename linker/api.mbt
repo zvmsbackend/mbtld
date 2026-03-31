@@ -49,7 +49,9 @@ fn load_inputs_from_paths(
 
 ///|
 /// Main entry point for linking
-pub fn link_with_diagnostics(opts : @ir.LinkOptions) -> LinkExecution raise @ir.LinkError {
+pub fn link_with_diagnostics(
+  opts : @ir.LinkOptions,
+) -> LinkExecution raise @ir.LinkError {
   let inputs = load_inputs_from_paths(opts.input_files)
   let pipeline = run_pipeline(inputs, opts)
   let ir = pipeline.ir
@@ -93,14 +95,11 @@ pub fn link_with_diagnostics(opts : @ir.LinkOptions) -> LinkExecution raise @ir.
       }
   }
 
-  {
-    artifact,
-    diagnostics: pipeline.diagnostics,
-  }
+  { artifact, diagnostics: pipeline.diagnostics }
 }
 
 ///|
 /// Main entry point for linking
 pub fn link(opts : @ir.LinkOptions) -> @ir.LinkArtifact raise @ir.LinkError {
-  (link_with_diagnostics(opts)).artifact
+  link_with_diagnostics(opts).artifact
 }

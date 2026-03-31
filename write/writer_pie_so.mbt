@@ -6,7 +6,7 @@ fn pie_align_up_int(value : Int, align : UInt64) -> Int {
   if a <= 1 {
     return value
   }
-  ((value + a - 1) / a) * a
+  (value + a - 1) / a * a
 }
 
 ///|

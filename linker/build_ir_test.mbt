@@ -13,7 +13,11 @@ fn bir_mk_section(name : String, data : Bytes) -> @ir.SectionRec {
 }
 
 ///|
-fn bir_mk_symbol(name : String, sec_index : Int, value : UInt64) -> @ir.SymbolRec {
+fn bir_mk_symbol(
+  name : String,
+  sec_index : Int,
+  value : UInt64,
+) -> @ir.SymbolRec {
   {
     name,
     name_hash: name.hash().to_uint64(),

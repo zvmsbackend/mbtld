@@ -142,7 +142,7 @@ fn align_up_int(value : Int, align : UInt64) -> Int {
   if a <= 1 {
     return value
   }
-  ((value + a - 1) / a) * a
+  (value + a - 1) / a * a
 }
 
 ///|
@@ -245,7 +245,11 @@ pub fn build_ir(
         merged_sections.push({
           output_name: sec.name,
           output_index: out_idx,
-          align: if sec.align == 0UL { 1UL } else { sec.align },
+          align: if sec.align == 0UL {
+            1UL
+          } else {
+            sec.align
+          },
           bytes: b"",
         })
       }
@@ -255,10 +259,7 @@ pub fn build_ir(
       let pad = base_off - merged.bytes.length()
       let merged_bytes = append_with_padding(merged.bytes, pad, sec.data)
 
-      merged_sections[out_idx] = {
-        ..merged,
-        bytes: merged_bytes,
-      }
+      merged_sections[out_idx] = { ..merged, bytes: merged_bytes }
 
       sec_map[sec_idx] = out_idx
       sec_base[sec_idx] = base_off.to_uint64()
@@ -318,7 +319,8 @@ pub fn build_ir(
       }
 
       let patch_off = sec_base[rel.sec_index] + rel.offset
-      let target_sym = if rel.sym_index >= 0 && rel.sym_index < obj.symbols.length() {
+      let target_sym = if rel.sym_index >= 0 &&
+        rel.sym_index < obj.symbols.length() {
         let target = obj.symbols[rel.sym_index]
         let name = normalized_symbol_name(obj.path, target)
         find_merged_symbol_index(merged_symbols, name)

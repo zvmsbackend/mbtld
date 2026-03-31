@@ -42,13 +42,7 @@ fn rc_ir(arch : @ir.Arch) -> @ir.LinkIr {
       },
     ],
     pending_relocs: [
-      {
-        out_sec: 0,
-        patch_off: 0UL,
-        rel_type: 2,
-        target_sym: 0,
-        addend: 0,
-      },
+      { out_sec: 0, patch_off: 0UL, rel_type: 2, target_sym: 0, addend: 0 },
     ],
   }
 }

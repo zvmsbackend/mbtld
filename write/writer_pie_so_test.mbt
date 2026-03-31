@@ -187,7 +187,7 @@ test "write_pie_or_shared emits dynsym exported symbols" {
   let mut dynsym_size = 0UL
   let mut dynsym_entsize = 0UL
   let mut dynsym_link = 0U
-  for i = 0; i < e_shnum; i = i + 1 {
+  for i in 0..<e_shnum {
     let sh_off = e_shoff + i * sh_entsize
     let sh_type = pie_read_u32_le(artifact.bytes, sh_off + 4)
     if sh_type == 11 {
@@ -239,7 +239,7 @@ test "write_pie_or_shared emits hash section linked to dynsym" {
   let mut hash_off = 0UL
   let mut hash_size = 0UL
 
-  for i = 0; i < e_shnum; i = i + 1 {
+  for i in 0..<e_shnum {
     let sh_off = e_shoff + i * sh_entsize
     let sh_type = pie_read_u32_le(artifact.bytes, sh_off + 4)
     if sh_type == 11 {
@@ -287,10 +287,19 @@ test "write_pie_or_shared emits soname without needed libs" {
   let dyn_off = pie_read_u64_le(artifact.bytes, 184).to_int()
   // DT_SONAME should be first tag when no DT_NEEDED exists.
   inspect(pie_read_u64_le(artifact.bytes, dyn_off), content="14")
-  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 8), content="1")
+  let soname_off = pie_read_u64_le(artifact.bytes, dyn_off + 8)
+  inspect(soname_off, content="1")
   // Then DT_STRTAB and DT_STRSZ.
   inspect(pie_read_u64_le(artifact.bytes, dyn_off + 16), content="5")
   inspect(pie_read_u64_le(artifact.bytes, dyn_off + 32), content="10")
+
+  // Verify SONAME payload text is basename: "libmbtld.so".
+  let strtab_addr = pie_read_u64_le(artifact.bytes, dyn_off + 24)
+  let soname_pos = (strtab_addr + soname_off).to_int()
+  inspect(artifact.bytes[soname_pos], content="b'\\x6C'")
+  inspect(artifact.bytes[soname_pos + 3], content="b'\\x6D'")
+  inspect(artifact.bytes[soname_pos + 7], content="b'\\x64'")
+  inspect(artifact.bytes[soname_pos + 10], content="b'\\x6F'")
 }
 
 ///|

@@ -13,14 +13,7 @@ pub fn read_archive(
     raise TruncatedFile("archive too small: \{path}")
   }
   // Check archive magic "!<arch>\n"
-  if view[0] != '!' ||
-    view[1] != '<' ||
-    view[2] != 'a' ||
-    view[3] != 'r' ||
-    view[4] != 'c' ||
-    view[5] != 'h' ||
-    view[6] != '>' ||
-    view[7] != '\n' {
+  guard is_archive_magic(view) else {
     raise CorruptArchive("invalid archive magic: \{path}")
   }
 
@@ -62,13 +55,5 @@ pub fn read_archive(
 ///|
 /// Check if bytes start with archive magic
 pub fn is_archive_magic(data : BytesView) -> Bool {
-  data.length() >= 8 &&
-  data[0] == '!' &&
-  data[1] == '<' &&
-  data[2] == 'a' &&
-  data[3] == 'r' &&
-  data[4] == 'c' &&
-  data[5] == 'h' &&
-  data[6] == '>' &&
-  data[7] == '\n'
+  data is ['!', '<', 'a', 'r', 'c', 'h', '>', '\n', ..]
 }

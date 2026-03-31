@@ -6,7 +6,7 @@ pub fn apply_relocations(
   ir : @ir.LinkIr,
   opts : @ir.LinkOptions,
 ) -> @ir.LinkIr raise @ir.RelocError {
-  if opts.output_kind == @ir.Relocatable {
+  if opts.output_kind is Relocatable {
     for pending in ir.pending_relocs {
       if !is_reloc_supported(ir.arch, pending.rel_type) {
         raise UnsupportedRelocType(pending.rel_type)
@@ -28,7 +28,7 @@ pub fn apply_relocations(
 
     if pending.target_sym < 0 ||
       pending.target_sym >= ir.merged_symbols.length() {
-      if opts.output_kind == @ir.Relocatable {
+      if opts.output_kind is Relocatable {
         continue
       }
       raise BadRelocTarget("invalid symbol index \{pending.target_sym}")
@@ -36,7 +36,7 @@ pub fn apply_relocations(
 
     let sym = ir.merged_symbols[pending.target_sym]
     let sym_value = if sym.output_sec < 0 {
-      if opts.output_kind == @ir.Relocatable {
+      if opts.output_kind is Relocatable {
         0UL
       } else {
         raise BadRelocTarget("unresolved symbol \{sym.name}")

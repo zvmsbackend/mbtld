@@ -16,9 +16,9 @@ fn machine_to_arch(e_machine : UInt16) -> @ir.Arch {
 fn convert_binding(st_info : Byte) -> @ir.SymbolBinding {
   let binding = st_info >> 4
   match binding {
-    0 => @ir.Local
-    1 => @ir.Global
-    _ => @ir.Weak
+    0 => Local
+    1 => Global
+    _ => Weak
   } // STB_WEAK = 2
 }
 
@@ -27,13 +27,13 @@ fn convert_binding(st_info : Byte) -> @ir.SymbolBinding {
 fn convert_symbol_type(st_info : Byte) -> @ir.SymbolType {
   let ty = st_info & 0xf
   match ty {
-    0 => @ir.NoType // STT_NOTYPE
-    1 => @ir.Object // STT_OBJECT
-    2 => @ir.Func // STT_FUNC
-    3 => @ir.Section // STT_SECTION
-    4 => @ir.File // STT_FILE
-    6 => @ir.Tls // STT_TLS
-    _ => @ir.NoType
+    0 => NoType // STT_NOTYPE
+    1 => Object // STT_OBJECT
+    2 => Func // STT_FUNC
+    3 => Section // STT_SECTION
+    4 => File // STT_FILE
+    6 => Tls // STT_TLS
+    _ => NoType
   }
 }
 
@@ -42,10 +42,10 @@ fn convert_symbol_type(st_info : Byte) -> @ir.SymbolType {
 fn convert_visibility(st_other : Byte) -> @ir.Visibility {
   let vis = st_other & 0x3
   match vis {
-    0 => @ir.Default
-    1 => @ir.Internal
-    2 => @ir.Hidden
-    _ => @ir.Protected
+    0 => Default
+    1 => Internal
+    2 => Hidden
+    _ => Protected
   } // STV_PROTECTED = 3
 }
 
@@ -86,10 +86,9 @@ fn convert_relocation(
   sections : Array[@read.ParsedSection],
 ) -> @ir.RelocRec {
   let target_name = strip_reloc_prefix(reloc.section_name)
-  let sec_index = match sections.search_by(sec => sec.name == target_name) {
-    Some(i) => i
-    None => -1
-  }
+  let sec_index = sections
+    .search_by(sec => sec.name == target_name)
+    .unwrap_or(-1)
 
   // Extract symbol index from r_info (upper 32 bits)
   let sym_idx = (reloc.r_info >> 32).to_int()
@@ -104,18 +103,10 @@ fn convert_relocation(
 }
 
 ///|
-fn starts_with(s : String, prefix : String) -> Bool {
-  if prefix.length() > s.length() {
-    return false
-  }
-  s[:prefix.length()].to_string() == prefix
-}
-
-///|
 fn strip_reloc_prefix(name : String) -> String {
-  if starts_with(name, ".rela") {
+  if name.has_prefix(".rela") {
     name[5:].to_string()
-  } else if starts_with(name, ".rel") {
+  } else if name.has_prefix(".rel") {
     name[4:].to_string()
   } else {
     name
@@ -130,10 +121,10 @@ fn should_merge_section(sec : @ir.SectionRec) -> Bool {
   if sec.data.length() == 0 {
     return false
   }
-  if sec.name == ".symtab" || sec.name == ".strtab" || sec.name == ".shstrtab" {
+  if sec.name is (".symtab" | ".strtab" | ".shstrtab") {
     return false
   }
-  !starts_with(sec.name, ".rel")
+  !sec.name.has_prefix(".rel")
 }
 
 ///|
@@ -159,7 +150,7 @@ fn append_with_padding(base : Bytes, pad : Int, tail : Bytes) -> Bytes {
 
 ///|
 fn normalized_symbol_name(path : String, sym : @ir.SymbolRec) -> String {
-  if sym.binding == @ir.Local {
+  if sym.binding is Local {
     "\{path}:\{sym.name}"
   } else {
     sym.name
@@ -171,10 +162,7 @@ fn find_merged_section_index(
   merged_sections : Array[@ir.MergedSection],
   name : String,
 ) -> Int {
-  match merged_sections.search_by(sec => sec.output_name == name) {
-    Some(i) => i
-    None => -1
-  }
+  merged_sections.search_by(sec => sec.output_name == name).unwrap_or(-1)
 }
 
 ///|
@@ -182,10 +170,7 @@ fn find_merged_symbol_index(
   merged_symbols : Array[@ir.MergedSymbol],
   name : String,
 ) -> Int {
-  match merged_symbols.search_by(sym => sym.name == name) {
-    Some(i) => i
-    None => -1
-  }
+  merged_symbols.search_by(sym => sym.name == name).unwrap_or(-1)
 }
 
 ///|
@@ -200,7 +185,7 @@ pub fn from_parsed_object(parsed : @read.ParsedObject) -> @ir.InputObject {
     path: parsed.path,
     raw: parsed.raw,
     arch: machine_to_arch(parsed.e_machine),
-    bitness: @ir.ELF64,
+    bitness: ELF64,
     sections,
     symbols,
     relocs,
@@ -217,7 +202,7 @@ pub fn build_ir(
   let arch = if input_objects.length() > 0 {
     input_objects[0].arch
   } else {
-    @ir.X86_64
+    X86_64
   }
 
   let merged_sections : Array[@ir.MergedSection] = []
@@ -272,7 +257,7 @@ pub fn build_ir(
   let merged_symbols : Array[@ir.MergedSymbol] = []
 
   // Stage 2: map input symbols onto merged output sections/offsets.
-  for obj_idx = 0; obj_idx < input_objects.length(); obj_idx = obj_idx + 1 {
+  for obj_idx in 0..<input_objects.length() {
     let obj = input_objects[obj_idx]
     let sec_map = sec_index_maps[obj_idx]
     let sec_base = sec_base_maps[obj_idx]
@@ -305,7 +290,7 @@ pub fn build_ir(
   let pending_relocs : Array[@ir.PendingReloc] = []
 
   // Stage 3: map relocations to merged section/symbol coordinates.
-  for obj_idx = 0; obj_idx < input_objects.length(); obj_idx = obj_idx + 1 {
+  for obj_idx in 0..<input_objects.length() {
     let obj = input_objects[obj_idx]
     let sec_map = sec_index_maps[obj_idx]
     let sec_base = sec_base_maps[obj_idx]
@@ -340,7 +325,7 @@ pub fn build_ir(
 
   {
     arch,
-    bitness: @ir.ELF64,
+    bitness: ELF64,
     input_objects,
     merged_sections,
     merged_symbols,

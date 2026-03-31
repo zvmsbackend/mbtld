@@ -10,54 +10,39 @@ fn rr_align_up_int(value : Int, align : UInt64) -> Int {
 }
 
 ///|
-fn rr_starts_with(s : String, prefix : String) -> Bool {
-  if prefix.length() > s.length() {
-    return false
-  }
-  s[:prefix.length()].to_string() == prefix
-}
-
-///|
 fn rr_machine_from_arch(arch : @ir.Arch) -> UInt16 {
   match arch {
-    @ir.X86_64 => @model.EM_X86_64
-    @ir.AARCH64 => @model.EM_AARCH64
-    @ir.RISCV64 => @model.EM_RISCV
-    @ir.LOONGARCH64 => @model.EM_LOONGARCH
+    X86_64 => @model.EM_X86_64
+    AARCH64 => @model.EM_AARCH64
+    RISCV64 => @model.EM_RISCV
+    LOONGARCH64 => @model.EM_LOONGARCH
   }
 }
 
 ///|
 fn rr_infer_sh_type(name : String) -> UInt {
-  if name == ".bss" || name == ".tbss" {
-    @model.SHT_NOBITS
-  } else if name == ".init_array" {
-    @model.SHT_INIT_ARRAY
-  } else if name == ".fini_array" {
-    @model.SHT_FINI_ARRAY
-  } else if name == ".preinit_array" {
-    @model.SHT_PREINIT_ARRAY
-  } else {
-    @model.SHT_PROGBITS
+  match name {
+    ".bss" | ".tbss" => @model.SHT_NOBITS
+    ".init_array" => @model.SHT_INIT_ARRAY
+    ".fini_array" => @model.SHT_FINI_ARRAY
+    ".preinit_array" => @model.SHT_PREINIT_ARRAY
+    _ => @model.SHT_PROGBITS
   }
 }
 
 ///|
 fn rr_infer_sh_flags(name : String) -> UInt64 {
-  let mut flags = 0UL
-  if name == ".text" || name == ".init" || name == ".fini" {
-    flags = @model.SHF_ALLOC | @model.SHF_EXECINSTR
-  } else if name == ".rodata" {
-    flags = @model.SHF_ALLOC
+  let flags = match name {
+    ".text" | ".init" | ".fini" => @model.SHF_ALLOC | @model.SHF_EXECINSTR
+    ".rodata" => @model.SHF_ALLOC
+    _ => @model.SHF_ALLOC | @model.SHF_WRITE
+  }
+
+  if name.has_prefix(".t") {
+    flags | @model.SHF_TLS
   } else {
-    flags = @model.SHF_ALLOC | @model.SHF_WRITE
+    flags
   }
-
-  if rr_starts_with(name, ".t") {
-    flags = flags | @model.SHF_TLS
-  }
-
-  flags
 }
 
 ///|
@@ -72,23 +57,7 @@ priv struct RrShdr {
   sh_info : UInt
   sh_addralign : UInt64
   sh_entsize : UInt64
-}
-
-///|
-fn rr_shdr_zero() -> RrShdr {
-  {
-    sh_name: 0,
-    sh_type: 0,
-    sh_flags: 0,
-    sh_addr: 0,
-    sh_offset: 0,
-    sh_size: 0,
-    sh_link: 0,
-    sh_info: 0,
-    sh_addralign: 0,
-    sh_entsize: 0,
-  }
-}
+} derive(Default)
 
 ///|
 fn rr_push_u32_le(out : Array[Byte], v : UInt) -> Unit {
@@ -139,10 +108,9 @@ fn rr_write_u64_le(out : Array[Byte], offset : Int, v : UInt64) -> Unit {
 
 ///|
 fn rr_build_elf64_relocatable(ir : @ir.LinkIr) -> Bytes {
-  let section_names : Array[String] = []
-  for sec in ir.merged_sections {
-    section_names.push(sec.output_name)
-  }
+  let section_names : Array[String] = ir.merged_sections.map(sec => {
+    sec.output_name
+  })
   section_names.push(".shstrtab")
 
   let sh_name_offsets : Array[UInt] = []
@@ -156,16 +124,12 @@ fn rr_build_elf64_relocatable(ir : @ir.LinkIr) -> Bytes {
   }
   let shstr_bytes = Bytes::from_array(shstr)
 
-  let shdrs : Array[RrShdr] = []
-  shdrs.push(rr_shdr_zero())
+  let shdrs : Array[RrShdr] = [RrShdr::default()]
 
-  let file : Array[Byte] = []
-  for _ in 0..<@model.ELF64_EHDR_SIZE {
-    file.push(0)
-  }
+  let file = [b'\x00'].repeat(@model.ELF64_EHDR_SIZE)
 
   let mut cursor = @model.ELF64_EHDR_SIZE
-  for i = 0; i < ir.merged_sections.length(); i = i + 1 {
+  for i in 0..<ir.merged_sections.length() {
     let sec = ir.merged_sections[i]
     let sec_ty = rr_infer_sh_type(sec.output_name)
     let sec_flags = rr_infer_sh_flags(sec.output_name)

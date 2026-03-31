@@ -12,19 +12,11 @@ fn pie_align_up_int(value : Int, align : UInt64) -> Int {
 ///|
 fn pie_machine_from_arch(arch : @ir.Arch) -> UInt16 {
   match arch {
-    @ir.X86_64 => @model.EM_X86_64
-    @ir.AARCH64 => @model.EM_AARCH64
-    @ir.RISCV64 => @model.EM_RISCV
-    @ir.LOONGARCH64 => @model.EM_LOONGARCH
+    X86_64 => @model.EM_X86_64
+    AARCH64 => @model.EM_AARCH64
+    RISCV64 => @model.EM_RISCV
+    LOONGARCH64 => @model.EM_LOONGARCH
   }
-}
-
-///|
-fn pie_starts_with(s : String, prefix : String) -> Bool {
-  if prefix.length() > s.length() {
-    return false
-  }
-  s[:prefix.length()].to_string() == prefix
 }
 
 ///|
@@ -39,41 +31,36 @@ fn pie_infer_sh_type(name : String) -> UInt {
     @model.SHT_STRTAB
   } else if name == ".bss" || name == ".tbss" {
     @model.SHT_NOBITS
-  } else if name == ".init_array" {
-    @model.SHT_INIT_ARRAY
-  } else if name == ".fini_array" {
-    @model.SHT_FINI_ARRAY
-  } else if name == ".preinit_array" {
-    @model.SHT_PREINIT_ARRAY
   } else {
-    @model.SHT_PROGBITS
+    match name {
+      ".init_array" => @model.SHT_INIT_ARRAY
+      ".fini_array" => @model.SHT_FINI_ARRAY
+      ".preinit_array" => @model.SHT_PREINIT_ARRAY
+      _ => @model.SHT_PROGBITS
+    }
   }
 }
 
 ///|
 fn pie_infer_sh_flags(name : String) -> UInt64 {
-  let mut flags = 0UL
-  if name == ".text" || name == ".init" || name == ".fini" {
-    flags = @model.SHF_ALLOC | @model.SHF_EXECINSTR
-  } else if name == ".hash" {
-    flags = @model.SHF_ALLOC
-  } else if name == ".dynsym" {
-    flags = @model.SHF_ALLOC
-  } else if name == ".dynstr" {
-    flags = @model.SHF_ALLOC
-  } else if name == ".dynamic" {
-    flags = @model.SHF_ALLOC | @model.SHF_WRITE
-  } else if name == ".rodata" {
-    flags = @model.SHF_ALLOC
+  let flags = if name == ".text" || name == ".init" || name == ".fini" {
+    @model.SHF_ALLOC | @model.SHF_EXECINSTR
   } else {
-    flags = @model.SHF_ALLOC | @model.SHF_WRITE
+    match name {
+      ".hash" => @model.SHF_ALLOC
+      ".dynsym" => @model.SHF_ALLOC
+      ".dynstr" => @model.SHF_ALLOC
+      ".dynamic" => @model.SHF_ALLOC | @model.SHF_WRITE
+      ".rodata" => @model.SHF_ALLOC
+      _ => @model.SHF_ALLOC | @model.SHF_WRITE
+    }
   }
 
-  if pie_starts_with(name, ".t") {
-    flags = flags | @model.SHF_TLS
+  if name.has_prefix(".t") {
+    flags | @model.SHF_TLS
+  } else {
+    flags
   }
-
-  flags
 }
 
 ///|
@@ -88,23 +75,7 @@ priv struct PieShdr {
   sh_info : UInt
   sh_addralign : UInt64
   sh_entsize : UInt64
-}
-
-///|
-fn pie_shdr_zero() -> PieShdr {
-  {
-    sh_name: 0,
-    sh_type: 0,
-    sh_flags: 0,
-    sh_addr: 0,
-    sh_offset: 0,
-    sh_size: 0,
-    sh_link: 0,
-    sh_info: 0,
-    sh_addralign: 0,
-    sh_entsize: 0,
-  }
-}
+} derive(Default)
 
 ///|
 fn pie_push_u32_le(out : Array[Byte], v : UInt) -> Unit {
@@ -180,7 +151,7 @@ fn pie_exportable_symbol(sym : @ir.MergedSymbol) -> Bool {
   if sym.name == "" {
     return false
   }
-  sym.binding != @ir.Local
+  !(sym.binding is Local)
 }
 
 ///|
@@ -226,7 +197,7 @@ fn pie_build_dynstr(
 ///|
 fn pie_output_basename(path : String) -> String {
   let mut last_sep = -1
-  for i = 0; i < path.length(); i = i + 1 {
+  for i in 0..<path.length() {
     let ch = path[i]
     if ch == 47 || ch == 92 {
       last_sep = i
@@ -276,16 +247,10 @@ fn pie_build_sysv_hash(exported_symbols : Array[@ir.MergedSymbol]) -> Bytes {
     1
   }
 
-  let buckets : Array[UInt] = []
-  for _ in 0..<nbucket {
-    buckets.push(0)
-  }
-  let chains : Array[UInt] = []
-  for _ in 0..<nchain {
-    chains.push(0)
-  }
+  let buckets = [0U].repeat(nbucket)
+  let chains = [0U].repeat(nchain)
 
-  for i = 0; i < exported_symbols.length(); i = i + 1 {
+  for i in 0..<exported_symbols.length() {
     let sym = exported_symbols[i]
     let sym_index = i + 1
     let b = pie_sysv_hash(sym.name) % nbucket.reinterpret_as_uint()
@@ -329,31 +294,31 @@ fn pie_dynamic_set_entry(
 ///|
 fn pie_symbol_binding_to_elf(binding : @ir.SymbolBinding) -> Byte {
   match binding {
-    @ir.Local => @model.STB_LOCAL
-    @ir.Global => @model.STB_GLOBAL
-    @ir.Weak => @model.STB_WEAK
+    Local => @model.STB_LOCAL
+    Global => @model.STB_GLOBAL
+    Weak => @model.STB_WEAK
   }
 }
 
 ///|
 fn pie_symbol_type_to_elf(ty : @ir.SymbolType) -> Byte {
   match ty {
-    @ir.NoType => @model.STT_NOTYPE
-    @ir.Object => @model.STT_OBJECT
-    @ir.Func => @model.STT_FUNC
-    @ir.Section => @model.STT_SECTION
-    @ir.File => @model.STT_FILE
-    @ir.Tls => @model.STT_TLS
+    NoType => @model.STT_NOTYPE
+    Object => @model.STT_OBJECT
+    Func => @model.STT_FUNC
+    Section => @model.STT_SECTION
+    File => @model.STT_FILE
+    Tls => @model.STT_TLS
   }
 }
 
 ///|
 fn pie_visibility_to_elf(vis : @ir.Visibility) -> Byte {
   match vis {
-    @ir.Default => @model.STV_DEFAULT
-    @ir.Internal => @model.STV_INTERNAL
-    @ir.Hidden => @model.STV_HIDDEN
-    @ir.Protected => @model.STV_PROTECTED
+    Default => @model.STV_DEFAULT
+    Internal => @model.STV_INTERNAL
+    Hidden => @model.STV_HIDDEN
+    Protected => @model.STV_PROTECTED
   }
 }
 
@@ -369,7 +334,7 @@ fn pie_build_dynsym(
     out.push(0)
   }
 
-  for i = 0; i < exported_symbols.length(); i = i + 1 {
+  for i in 0..<exported_symbols.length() {
     let sym = exported_symbols[i]
     let st_name = sym_name_offsets[i]
     let st_info = ((pie_symbol_binding_to_elf(sym.binding).to_int() << 4) |
@@ -393,24 +358,6 @@ fn pie_build_dynsym(
   }
 
   Bytes::from_array(out)
-}
-
-///|
-fn pie_max_u64(a : UInt64, b : UInt64) -> UInt64 {
-  if a > b {
-    a
-  } else {
-    b
-  }
-}
-
-///|
-fn pie_min_u64(a : UInt64, b : UInt64) -> UInt64 {
-  if a < b {
-    a
-  } else {
-    b
-  }
 }
 
 ///|
@@ -453,8 +400,8 @@ fn pie_extend_load_range(
     mem_start = sec_addr
     mem_end = sec_addr + sec_size
   } else {
-    mem_start = pie_min_u64(mem_start, sec_addr)
-    mem_end = pie_max_u64(mem_end, sec_addr + sec_size)
+    mem_start = @cmp.minimum(mem_start, sec_addr)
+    mem_end = @cmp.maximum(mem_end, sec_addr + sec_size)
   }
 
   let mut file_start = range.file_start
@@ -464,8 +411,8 @@ fn pie_extend_load_range(
       file_start = sec_off
       file_end = sec_off + sec_size
     } else {
-      file_start = pie_min_u64(file_start, sec_off)
-      file_end = pie_max_u64(file_end, sec_off + sec_size)
+      file_start = @cmp.minimum(file_start, sec_off)
+      file_end = @cmp.maximum(file_end, sec_off + sec_size)
     }
   }
 
@@ -481,7 +428,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   let exported_symbols : Array[@ir.MergedSymbol] = []
   let mut has_dynamic = false
   let soname = if opts.output_kind == @ir.SharedLibrary && opts.output != "" {
-    Some(pie_output_basename(opts.output))
+    opts.output |> pie_output_basename |> Some
   } else {
     None
   }
@@ -532,10 +479,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
     })
   }
 
-  let section_names : Array[String] = []
-  for sec in sections {
-    section_names.push(sec.output_name)
-  }
+  let section_names : Array[String] = sections.map(sec => sec.output_name)
   section_names.push(".shstrtab")
 
   let sh_name_offsets : Array[UInt] = []
@@ -549,8 +493,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   }
   let shstr_bytes = Bytes::from_array(shstr)
 
-  let shdrs : Array[PieShdr] = []
-  shdrs.push(pie_shdr_zero())
+  let shdrs : Array[PieShdr] = [PieShdr::default()]
 
   let file : Array[Byte] = []
   let e_phoff = @model.ELF64_EHDR_SIZE.to_uint64()
@@ -577,7 +520,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   let mut hash_shidx = 0
   let mut dynsym_shidx = 0
   let mut dynamic_shidx = 0
-  for i = 0; i < sections.length(); i = i + 1 {
+  for i in 0..<sections.length() {
     let sec = sections[i]
     let sec_ty = pie_infer_sh_type(sec.output_name)
     let sec_flags = pie_infer_sh_flags(sec.output_name)
@@ -603,24 +546,27 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
     vcursor += sec.bytes.length()
 
     let sh_index = i + 1
-    if sec.output_name == ".dynsym" {
-      dynsym_addr = sec_addr
-      dynsym_shidx = sh_index
-    }
-    if sec.output_name == ".hash" {
-      hash_addr = sec_addr
-      hash_shidx = sh_index
-    }
-    if sec.output_name == ".dynstr" {
-      dynstr_addr = sec_addr
-      dynstr_size = sec.bytes.length().to_uint64()
-      dynstr_shidx = sh_index
-    }
-    if sec.output_name == ".dynamic" {
-      dynamic_off = sec_off
-      dynamic_addr = sec_addr
-      dynamic_size = sec.bytes.length().to_uint64()
-      dynamic_shidx = sh_index
+    match sec.output_name {
+      ".dynsym" => {
+        dynsym_addr = sec_addr
+        dynsym_shidx = sh_index
+      }
+      ".hash" => {
+        hash_addr = sec_addr
+        hash_shidx = sh_index
+      }
+      ".dynstr" => {
+        dynstr_addr = sec_addr
+        dynstr_size = sec.bytes.length().to_uint64()
+        dynstr_shidx = sh_index
+      }
+      ".dynamic" => {
+        dynamic_off = sec_off
+        dynamic_addr = sec_addr
+        dynamic_size = sec.bytes.length().to_uint64()
+        dynamic_shidx = sh_index
+      }
+      _ => ()
     }
 
     if (sec_flags & @model.SHF_ALLOC) != 0UL {
@@ -652,12 +598,10 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
       sh_addr: sec_addr,
       sh_offset: sec_off,
       sh_size: sec.bytes.length().to_uint64(),
-      sh_link: if sec.output_name == ".dynamic" || sec.output_name == ".dynsym" {
-        dynstr_shidx.reinterpret_as_uint()
-      } else if sec.output_name == ".hash" {
-        dynsym_shidx.reinterpret_as_uint()
-      } else {
-        0
+      sh_link: match sec.output_name {
+        ".dynamic" | ".dynsym" => dynstr_shidx.reinterpret_as_uint()
+        ".hash" => dynsym_shidx.reinterpret_as_uint()
+        _ => 0
       },
       sh_info: if sec.output_name == ".dynsym" {
         1
@@ -762,7 +706,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   if rx_range.has_alloc {
     let ph_off = e_phoff.to_int() + ph_idx * @model.ELF64_PHDR_SIZE
     let file_start = rx_range.file_start
-    let file_end = pie_max_u64(rx_range.file_end, file_start)
+    let file_end = @cmp.maximum(rx_range.file_end, file_start)
     pie_write_u32_le(file, ph_off, @model.PT_LOAD)
     pie_write_u32_le(file, ph_off + 4, @model.PF_R | @model.PF_X)
     pie_write_u64_le(file, ph_off + 8, file_start)
@@ -777,7 +721,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   if rw_range.has_alloc {
     let ph_off = e_phoff.to_int() + ph_idx * @model.ELF64_PHDR_SIZE
     let file_start = rw_range.file_start
-    let file_end = pie_max_u64(rw_range.file_end, file_start)
+    let file_end = @cmp.maximum(rw_range.file_end, file_start)
     pie_write_u32_le(file, ph_off, @model.PT_LOAD)
     pie_write_u32_le(file, ph_off + 4, @model.PF_R | @model.PF_W)
     pie_write_u64_le(file, ph_off + 8, file_start)
@@ -851,7 +795,7 @@ pub fn write_pie_or_shared(
   ir : @ir.LinkIr,
   opts : @ir.LinkOptions,
 ) -> @ir.LinkArtifact raise @ir.WriteError {
-  if opts.output_kind == @ir.Relocatable {
+  if opts.output_kind is Relocatable {
     raise InvalidOutputKind(
       "write_pie_or_shared cannot emit relocatable output",
     )
@@ -860,16 +804,17 @@ pub fn write_pie_or_shared(
     raise LayoutFailure("no input object to emit")
   }
 
-  let payload = if ir.merged_sections.length() == 0 {
-    if ir.input_objects.length() > 1 {
-      raise LayoutFailure(
-        "no merged output sections for multi-input \{opts.output_kind.to_string()} build",
-      )
+  let payload = match ir.merged_sections {
+    [] => {
+      if ir.input_objects.length() > 1 {
+        raise LayoutFailure(
+          "no merged output sections for multi-input \{opts.output_kind.to_string()} build",
+        )
+      }
+      // Keep backward compatibility for minimal single-input flow.
+      ir.input_objects[0].raw
     }
-    // Keep backward compatibility for minimal single-input flow.
-    ir.input_objects[0].raw
-  } else {
-    pie_build_elf64_dyn(ir, opts)
+    [_, ..] => pie_build_elf64_dyn(ir, opts)
   }
 
   {

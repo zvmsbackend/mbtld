@@ -1,4 +1,5 @@
 import {
   "sennenki/mbtld/ir",
   "sennenki/mbtld/elf/model",
+  "moonbitlang/core/cmp",
 }

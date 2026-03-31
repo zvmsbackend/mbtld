@@ -3,7 +3,7 @@ test "is_elf_magic detects ELF magic bytes" {
   // Valid ELF magic
   let elf_bytes : Bytes = [0x7f, 'E', 'L', 'F', 0x02, 0x01, 0x01, 0x00]
   inspect(elf_bytes, content="b\"\\x7fELF\\x02\\x01\\x01\\x00\"")
-  assert_true(is_elf_magic(elf_bytes[:]))
+  elf_bytes[:] |> is_elf_magic |> assert_true
 
   // Invalid magic
   let invalid_bytes : Bytes = [0x7f, 'E', 'L', 'X']
@@ -14,7 +14,7 @@ test "is_elf_magic detects ELF magic bytes" {
 test "is_archive_magic detects archive magic" {
   // Valid archive magic "!<arch>\n"
   let ar_bytes : Bytes = ['!', '<', 'a', 'r', 'c', 'h', '>', '\n']
-  assert_true(is_archive_magic(ar_bytes[:]))
+  ar_bytes[:] |> is_archive_magic |> assert_true
 
   // Invalid magic
   let invalid_bytes : Bytes = ['!', '<', 'a', 'r', 'c', 'h', '>', ' ']

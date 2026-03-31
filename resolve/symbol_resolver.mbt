@@ -9,14 +9,14 @@ pub fn resolve_symbols(
   let symbol_count = ir.merged_symbols.length()
 
   // Global symbols must not have multiple concrete definitions.
-  for i = 0; i < symbol_count; i = i + 1 {
+  for i in 0..<symbol_count {
     let left = ir.merged_symbols[i]
-    if left.binding != @ir.Global || left.output_sec < 0 {
+    if !(left.binding is Global) || left.output_sec < 0 {
       continue
     }
-    for j = i + 1; j < symbol_count; j = j + 1 {
+    for j in (i + 1)..<symbol_count {
       let right = ir.merged_symbols[j]
-      if right.binding == @ir.Global &&
+      if right.binding is Global &&
         right.output_sec >= 0 &&
         right.name == left.name {
         raise MultipleDefinition(left.name)
@@ -33,7 +33,7 @@ pub fn resolve_symbols(
       raise SectionConflict("invalid relocation section index \{reloc.out_sec}")
     }
 
-    if opts.output_kind == @ir.ExecutablePie {
+    if opts.output_kind is ExecutablePie {
       let target = ir.merged_symbols[reloc.target_sym]
       if target.output_sec < 0 {
         raise UndefinedSymbol(target.name)
@@ -65,7 +65,7 @@ pub fn merge_sections(
     raise SectionConflict("section alignment cannot be zero")
   }
 
-  let seen : Array[Int] = []
+  let seen = Set::new()
   for sec in ir.merged_sections {
     if sec.output_name == "" {
       raise SectionConflict("output section name cannot be empty")
@@ -75,7 +75,7 @@ pub fn merge_sections(
         "duplicate output section index \{sec.output_index}",
       )
     }
-    seen.push(sec.output_index)
+    seen.add(sec.output_index)
   }
 
   ir

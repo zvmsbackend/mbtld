@@ -9,7 +9,7 @@ pub fn run_cli(args : Array[String]) -> Int {
     write_output(opts.output, result.artifact.bytes)
     if opts.verbose {
       for diag in result.diagnostics {
-        println(format_diag(diag))
+        diag |> format_diag |> println
       }
       println("Output written to: \{opts.output}")
     }
@@ -47,7 +47,10 @@ pub fn run_cli(args : Array[String]) -> Int {
       println("Unsupported flag: \{flag}")
       8
     }
-    _ => abort("unreachable")
+    _ => {
+      println("Internal error: unhandled linker exception")
+      99
+    }
   }
 }
 

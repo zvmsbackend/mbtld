@@ -175,21 +175,17 @@ pub fn parse_args(args : Array[String]) -> @ir.LinkOptions raise @ir.CliError {
 ///|
 /// Parse alignment value
 fn parse_alignment(s : String) -> UInt {
-  if s == "page" {
-    4096
-  } else if s == "largepage" {
-    65536
-  } else {
-    @string.parse_uint(s[:]) catch {
-      _ => 4096
-    }
+  match s {
+    "page" => 4096
+    "largepage" => 65536
+    _ => @string.parse_uint(s) catch { _ => 4096 }
   }
 }
 
 ///|
 /// Parse uint64 value
 fn parse_uint64(s : String) -> UInt64 {
-  @string.parse_uint64(s[:]) catch {
+  @string.parse_uint64(s) catch {
     _ => 0
   }
 }

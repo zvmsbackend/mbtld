@@ -41,18 +41,4 @@ pub struct Elf64Phdr {
   p_filesz : UInt64
   p_memsz : UInt64
   p_align : UInt64
-} derive(Show)
-
-///|
-pub fn Elf64Phdr::zero() -> Elf64Phdr {
-  {
-    p_type: 0,
-    p_flags: 0,
-    p_offset: 0,
-    p_vaddr: 0,
-    p_paddr: 0,
-    p_filesz: 0,
-    p_memsz: 0,
-    p_align: 0,
-  }
-}
+} derive(Show, Default)

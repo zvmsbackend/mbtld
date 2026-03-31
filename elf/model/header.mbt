@@ -123,23 +123,7 @@ pub struct Elf64Shdr {
   sh_info : UInt
   sh_addralign : UInt64
   sh_entsize : UInt64
-} derive(Show)
-
-///|
-pub fn Elf64Shdr::zero() -> Elf64Shdr {
-  {
-    sh_name: 0,
-    sh_type: 0,
-    sh_flags: 0,
-    sh_addr: 0,
-    sh_offset: 0,
-    sh_size: 0,
-    sh_link: 0,
-    sh_info: 0,
-    sh_addralign: 0,
-    sh_entsize: 0,
-  }
-}
+} derive(Show, Default)
 
 ///|
 /// Section header type values

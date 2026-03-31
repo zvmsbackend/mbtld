@@ -273,25 +273,22 @@ pub struct Elf64Phdr {
   p_filesz : UInt64
   p_memsz : UInt64
   p_align : UInt64
-} derive(Show)
-pub fn Elf64Phdr::zero() -> Self
+} derive(Default, Show)
 
 pub struct Elf64Rel {
   r_offset : UInt64
   r_info : UInt64
-} derive(Show)
+} derive(Default, Show)
 pub fn Elf64Rel::rel_type(Self) -> UInt
 pub fn Elf64Rel::sym_index(Self) -> UInt
-pub fn Elf64Rel::zero() -> Self
 
 pub struct Elf64Rela {
   r_offset : UInt64
   r_info : UInt64
   r_addend : Int64
-} derive(Show)
+} derive(Default, Show)
 pub fn Elf64Rela::rel_type(Self) -> UInt
 pub fn Elf64Rela::sym_index(Self) -> UInt
-pub fn Elf64Rela::zero() -> Self
 
 pub struct Elf64Shdr {
   sh_name : UInt
@@ -304,8 +301,7 @@ pub struct Elf64Shdr {
   sh_info : UInt
   sh_addralign : UInt64
   sh_entsize : UInt64
-} derive(Show)
-pub fn Elf64Shdr::zero() -> Self
+} derive(Default, Show)
 
 pub struct Elf64Sym {
   st_name : UInt

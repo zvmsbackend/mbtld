@@ -59,39 +59,27 @@ pub fn link_with_diagnostics(
   let artifact = match opts.output_kind {
     Relocatable =>
       @write.write_relocatable(ir, opts) catch {
-        LayoutFailure(msg) => raise Write(LayoutFailure(msg))
-        InvalidOutputKind(msg) => raise Write(InvalidOutputKind(msg))
-        SerializeFailure(msg) => raise Write(SerializeFailure(msg))
+        e => raise Write(e)
       }
     ExecutablePie =>
       @write.write_pie_or_shared(ir, opts) catch {
-        LayoutFailure(msg) => raise Write(LayoutFailure(msg))
-        InvalidOutputKind(msg) => raise Write(InvalidOutputKind(msg))
-        SerializeFailure(msg) => raise Write(SerializeFailure(msg))
+        e => raise Write(e)
       }
     SharedLibrary =>
       @write.write_pie_or_shared(ir, opts) catch {
-        LayoutFailure(msg) => raise Write(LayoutFailure(msg))
-        InvalidOutputKind(msg) => raise Write(InvalidOutputKind(msg))
-        SerializeFailure(msg) => raise Write(SerializeFailure(msg))
+        e => raise Write(e)
       }
     EfiApplication =>
       @write.write_pie_or_shared(ir, opts) catch {
-        LayoutFailure(msg) => raise Write(LayoutFailure(msg))
-        InvalidOutputKind(msg) => raise Write(InvalidOutputKind(msg))
-        SerializeFailure(msg) => raise Write(SerializeFailure(msg))
+        e => raise Write(e)
       }
     EfiBootDriver =>
       @write.write_pie_or_shared(ir, opts) catch {
-        LayoutFailure(msg) => raise Write(LayoutFailure(msg))
-        InvalidOutputKind(msg) => raise Write(InvalidOutputKind(msg))
-        SerializeFailure(msg) => raise Write(SerializeFailure(msg))
+        e => raise Write(e)
       }
     EfiRuntimeDriver =>
       @write.write_pie_or_shared(ir, opts) catch {
-        LayoutFailure(msg) => raise Write(LayoutFailure(msg))
-        InvalidOutputKind(msg) => raise Write(InvalidOutputKind(msg))
-        SerializeFailure(msg) => raise Write(SerializeFailure(msg))
+        e => raise Write(e)
       }
   }
 

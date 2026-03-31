@@ -126,21 +126,9 @@ pub fn run_pipeline(
     })
   }
 
-  let ir = @resolve.resolve_symbols(ir, opts) catch {
-    UndefinedSymbol(msg) => raise Resolve(UndefinedSymbol(msg))
-    MultipleDefinition(msg) => raise Resolve(MultipleDefinition(msg))
-    SectionConflict(msg) => raise Resolve(SectionConflict(msg))
-  }
-  let ir = @resolve.merge_sections(ir, opts) catch {
-    UndefinedSymbol(msg) => raise Resolve(UndefinedSymbol(msg))
-    MultipleDefinition(msg) => raise Resolve(MultipleDefinition(msg))
-    SectionConflict(msg) => raise Resolve(SectionConflict(msg))
-  }
-  let ir = @reloc.apply_relocations(ir, opts) catch {
-    UnsupportedRelocType(t) => raise Reloc(UnsupportedRelocType(t))
-    RelocOverflow(msg) => raise Reloc(RelocOverflow(msg))
-    BadRelocTarget(msg) => raise Reloc(BadRelocTarget(msg))
-  }
+  let ir = @resolve.resolve_symbols(ir, opts) catch { e => raise Resolve(e) }
+  let ir = @resolve.merge_sections(ir, opts) catch { e => raise Resolve(e) }
+  let ir = @reloc.apply_relocations(ir, opts) catch { e => raise Reloc(e) }
 
   { ir, diagnostics }
 }

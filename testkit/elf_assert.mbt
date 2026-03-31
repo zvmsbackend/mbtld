@@ -84,7 +84,5 @@ pub fn assert_same_relocations(expected : Bytes, actual : Bytes) -> Bool {
 
 ///|
 fn parse_for_assert(data : Bytes) -> @read.ParsedObject? {
-  Some(@read.parse_object(data, "<assert>")) catch {
-    _ => None
-  }
+  (try? @read.parse_object(data, "<assert>")).to_option()
 }

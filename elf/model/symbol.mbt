@@ -86,10 +86,10 @@ pub fn Elf64Sym::visibility(self : Elf64Sym) -> Byte {
 
 ///|
 pub fn Elf64Sym::is_defined(self : Elf64Sym) -> Bool {
-  self.st_shndx != SHN_UNDEF
+  !(self.st_shndx is SHN_UNDEF)
 }
 
 ///|
 pub fn Elf64Sym::is_undefined(self : Elf64Sym) -> Bool {
-  self.st_shndx == SHN_UNDEF
+  self.st_shndx is SHN_UNDEF
 }

@@ -104,10 +104,8 @@ fn parse_elf_header(
     .unwrap_or_error()
 
   // Validate magic
-  if e_ident[0] != @model.ELFMAG0 ||
-    e_ident[1] != @model.ELFMAG1 ||
-    e_ident[2] != @model.ELFMAG2 ||
-    e_ident[3] != @model.ELFMAG3 {
+  guard e_ident
+    is [@model.ELFMAG0, @model.ELFMAG1, @model.ELFMAG2, @model.ELFMAG3, ..] else {
     raise BadSignature("invalid ELF magic in \{path}")
   }
 
@@ -186,14 +184,15 @@ fn parse_elf_header(
     )
   }
 
-  if e_machine != @model.EM_X86_64 &&
-    e_machine != @model.EM_AARCH64 &&
-    e_machine != @model.EM_RISCV &&
-    e_machine != @model.EM_LOONGARCH {
+  if !(e_machine
+    is (@model.EM_X86_64
+    | @model.EM_AARCH64
+    | @model.EM_RISCV
+    | @model.EM_LOONGARCH)) {
     raise UnsupportedMachine("unsupported machine \{e_machine} in \{path}")
   }
 
-  @model.Elf64Ehdr::{
+  {
     e_ident,
     e_type,
     e_machine,
@@ -323,7 +322,7 @@ fn resolve_section_names(
   }
   let shstrtab = data[shstrtab_sec.sh_offset.to_int():(shstrtab_sec.sh_offset +
   shstrtab_sec.sh_size).to_int()].to_bytes()
-  sections.map(fn(sec : ParsedSection) -> ParsedSection {
+  sections.map(sec => {
     let name = read_cstring(shstrtab, sec.name_offset)
     { ..sec, name, }
   })
@@ -382,20 +381,20 @@ fn parse_relocations(
   sections : Array[ParsedSection],
   data : Bytes,
 ) -> Array[ParsedRelocation] raise ElfError {
-  let mut relocations : Array[ParsedRelocation] = []
+  let relocations = []
   for sec in sections {
     if sec.sh_type == @model.SHT_RELA {
       if sec.sh_size.to_int() % @model.ELF64_RELA_SIZE != 0 {
         raise InvalidRelocation("SHT_RELA section size is not entry-aligned")
       }
       let relas = parse_rela_section(sec, data)
-      relocations = relocations + relas
+      relocations.append(relas)
     } else if sec.sh_type == @model.SHT_REL {
       if sec.sh_size.to_int() % @model.ELF64_REL_SIZE != 0 {
         raise InvalidRelocation("SHT_REL section size is not entry-aligned")
       }
       let rels = parse_rel_section(sec, data)
-      relocations = relocations + rels
+      relocations.append(rels)
     }
   }
   relocations

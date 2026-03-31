@@ -4,9 +4,7 @@
 /// Load a fixture file from testkit/fixtures directory
 pub fn load_fixture(name : String) -> Bytes? {
   let path = "testkit/fixtures/\{name}"
-  Some(@fs.read_file_to_bytes(path)) catch {
-    @fs.IOError(_) => None
-  }
+  (try? @fs.read_file_to_bytes(path)).to_option()
 }
 
 ///|
@@ -42,7 +40,7 @@ fn matches_pattern(name : String, pattern : String) -> Bool {
     return true
   }
 
-  let star_count = count_stars(pattern)
+  let star_count = pattern.iter().filter(c => c == '*').count()
   if star_count == 0 {
     return name == pattern
   }
@@ -50,8 +48,7 @@ fn matches_pattern(name : String, pattern : String) -> Bool {
     return false
   }
 
-  let idx = first_star_index(pattern)
-  if idx < 0 {
+  guard pattern.iter().search_by(c => c == '*') is Some(idx) else {
     return name == pattern
   }
   let prefix = pattern[:idx].to_string()
@@ -59,45 +56,16 @@ fn matches_pattern(name : String, pattern : String) -> Bool {
   if name.length() < prefix.length() + suffix.length() {
     return false
   }
-  starts_with(name, prefix) && ends_with(name, suffix)
+  name.has_prefix(prefix) && name.has_suffix(suffix)
 }
 
 ///|
-fn count_stars(s : String) -> Int {
-  let mut count = 0
-  for c in s {
-    if c == '*' {
-      count += 1
+fn[T] Iter::search_by(self : Iter[T], f : (T) -> Bool) -> Int? {
+  for item in self; idx = 0 {
+    if f(item) {
+      return Some(idx)
     }
+    continue idx + 1
   }
-  count
-}
-
-///|
-fn first_star_index(s : String) -> Int {
-  let mut idx = 0
-  for c in s {
-    if c == '*' {
-      return idx
-    }
-    idx += 1
-  }
-  -1
-}
-
-///|
-fn starts_with(s : String, prefix : String) -> Bool {
-  if prefix.length() > s.length() {
-    return false
-  }
-  s[:prefix.length()].to_string() == prefix
-}
-
-///|
-fn ends_with(s : String, suffix : String) -> Bool {
-  if suffix.length() > s.length() {
-    return false
-  }
-  let start = s.length() - suffix.length()
-  s[start:].to_string() == suffix
+  None
 }

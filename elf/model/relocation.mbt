@@ -106,12 +106,22 @@ pub struct Elf64Rel {
 } derive(Show)
 
 ///|
+pub fn Elf64Rel::zero() -> Elf64Rel {
+  { r_offset: 0, r_info: 0 }
+}
+
+///|
 /// ELF64 relocation entry (with addend)
 pub struct Elf64Rela {
   r_offset : UInt64
   r_info : UInt64
   r_addend : Int64
 } derive(Show)
+
+///|
+pub fn Elf64Rela::zero() -> Elf64Rela {
+  { r_offset: 0, r_info: 0, r_addend: 0 }
+}
 
 ///|
 pub fn Elf64Rel::sym_index(self : Elf64Rel) -> UInt {

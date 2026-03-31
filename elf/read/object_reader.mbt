@@ -65,6 +65,7 @@ pub struct ArchiveMember {
 /// Read and parse an ELF object file
 pub fn read_object(path : String) -> ParsedObject raise {
   let data = @fs.read_file_to_bytes(path)
+  ignore(InputObject::{ path, data })
   parse_object(data, path)
 }
 
@@ -185,6 +186,13 @@ fn parse_elf_header(
     )
   }
 
+  if e_machine != @model.EM_X86_64 &&
+    e_machine != @model.EM_AARCH64 &&
+    e_machine != @model.EM_RISCV &&
+    e_machine != @model.EM_LOONGARCH {
+    raise UnsupportedMachine("unsupported machine \{e_machine} in \{path}")
+  }
+
   @model.Elf64Ehdr::{
     e_ident,
     e_type,
@@ -216,7 +224,7 @@ fn parse_sections(
   cursor.skip(header.e_shoff.to_int() - @model.ELF64_EHDR_SIZE)
 
   let sections : Array[ParsedSection] = []
-  for i in 0..<header.e_shnum.to_int() {
+  for _ in 0..<header.e_shnum.to_int() {
     if cursor.remaining() < @model.ELF64_SHDR_SIZE {
       raise TruncatedFile("truncated section header")
     }
@@ -373,13 +381,19 @@ fn parse_symbols(
 fn parse_relocations(
   sections : Array[ParsedSection],
   data : Bytes,
-) -> Array[ParsedRelocation] {
+) -> Array[ParsedRelocation] raise ElfError {
   let mut relocations : Array[ParsedRelocation] = []
   for sec in sections {
     if sec.sh_type == @model.SHT_RELA {
+      if sec.sh_size.to_int() % @model.ELF64_RELA_SIZE != 0 {
+        raise InvalidRelocation("SHT_RELA section size is not entry-aligned")
+      }
       let relas = parse_rela_section(sec, data)
       relocations = relocations + relas
     } else if sec.sh_type == @model.SHT_REL {
+      if sec.sh_size.to_int() % @model.ELF64_REL_SIZE != 0 {
+        raise InvalidRelocation("SHT_REL section size is not entry-aligned")
+      }
       let rels = parse_rel_section(sec, data)
       relocations = relocations + rels
     }

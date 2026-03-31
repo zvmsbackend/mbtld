@@ -126,6 +126,22 @@ pub struct Elf64Shdr {
 } derive(Show)
 
 ///|
+pub fn Elf64Shdr::zero() -> Elf64Shdr {
+  {
+    sh_name: 0,
+    sh_type: 0,
+    sh_flags: 0,
+    sh_addr: 0,
+    sh_offset: 0,
+    sh_size: 0,
+    sh_link: 0,
+    sh_info: 0,
+    sh_addralign: 0,
+    sh_entsize: 0,
+  }
+}
+
+///|
 /// Section header type values
 pub const SHT_NULL : UInt = 0
 

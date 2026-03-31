@@ -11,15 +11,6 @@ const R_X86_64_64 : UInt = 1
 const R_X86_64_PC32 : UInt = 2
 
 ///|
-const R_X86_64_GOT32 : UInt = 3
-
-///|
-const R_X86_64_PLT32 : UInt = 4
-
-///|
-const R_X86_64_GOTPCREL : UInt = 9
-
-///|
 const R_X86_64_32 : UInt = 10
 
 ///|

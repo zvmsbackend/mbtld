@@ -65,6 +65,11 @@ pub struct Elf64Sym {
 } derive(Show)
 
 ///|
+pub fn Elf64Sym::zero() -> Elf64Sym {
+  { st_name: 0, st_info: 0, st_other: 0, st_shndx: 0, st_value: 0, st_size: 0 }
+}
+
+///|
 pub fn Elf64Sym::binding(self : Elf64Sym) -> Byte {
   self.st_info >> 4
 }

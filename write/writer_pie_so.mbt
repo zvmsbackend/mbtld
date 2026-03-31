@@ -164,20 +164,42 @@ fn pie_infer_sh_entsize(name : String, sec_ty : UInt) -> UInt64 {
 priv struct PieDynBuild {
   dynstr : Bytes
   needed_offsets : Array[UInt64]
+  sym_name_offsets : Array[UInt]
 }
 
 ///|
-fn pie_build_dynstr(libs : Array[String]) -> PieDynBuild {
+fn pie_exportable_symbol(sym : @ir.MergedSymbol) -> Bool {
+  if sym.name == "" {
+    return false
+  }
+  sym.binding != @ir.Local
+}
+
+///|
+fn pie_append_cstr_with_offset(arr : Array[Byte], s : String) -> UInt {
+  let off = arr.length().reinterpret_as_uint()
+  for ch in s {
+    arr.push(Char::to_int(ch).to_byte())
+  }
+  arr.push(0)
+  off
+}
+
+///|
+fn pie_build_dynstr(
+  libs : Array[String],
+  exported_symbols : Array[@ir.MergedSymbol],
+) -> PieDynBuild {
   let arr : Array[Byte] = [0]
   let offs : Array[UInt64] = []
+  let sym_name_offsets : Array[UInt] = []
   for lib in libs {
-    offs.push(arr.length().to_uint64())
-    for ch in lib {
-      arr.push(Char::to_int(ch).to_byte())
-    }
-    arr.push(0)
+    offs.push(pie_append_cstr_with_offset(arr, lib).to_uint64())
   }
-  { dynstr: Bytes::from_array(arr), needed_offsets: offs }
+  for sym in exported_symbols {
+    sym_name_offsets.push(pie_append_cstr_with_offset(arr, sym.name))
+  }
+  { dynstr: Bytes::from_array(arr), needed_offsets: offs, sym_name_offsets }
 }
 
 ///|
@@ -202,6 +224,75 @@ fn pie_dynamic_set_entry(
   let entry_off = dyn_off.to_int() + idx * 16
   pie_write_u64_le(file, entry_off, tag)
   pie_write_u64_le(file, entry_off + 8, value)
+}
+
+///|
+fn pie_symbol_binding_to_elf(binding : @ir.SymbolBinding) -> Byte {
+  match binding {
+    @ir.Local => @model.STB_LOCAL
+    @ir.Global => @model.STB_GLOBAL
+    @ir.Weak => @model.STB_WEAK
+  }
+}
+
+///|
+fn pie_symbol_type_to_elf(ty : @ir.SymbolType) -> Byte {
+  match ty {
+    @ir.NoType => @model.STT_NOTYPE
+    @ir.Object => @model.STT_OBJECT
+    @ir.Func => @model.STT_FUNC
+    @ir.Section => @model.STT_SECTION
+    @ir.File => @model.STT_FILE
+    @ir.Tls => @model.STT_TLS
+  }
+}
+
+///|
+fn pie_visibility_to_elf(vis : @ir.Visibility) -> Byte {
+  match vis {
+    @ir.Default => @model.STV_DEFAULT
+    @ir.Internal => @model.STV_INTERNAL
+    @ir.Hidden => @model.STV_HIDDEN
+    @ir.Protected => @model.STV_PROTECTED
+  }
+}
+
+///|
+fn pie_build_dynsym(
+  exported_symbols : Array[@ir.MergedSymbol],
+  sym_name_offsets : Array[UInt],
+) -> Bytes {
+  let out : Array[Byte] = []
+
+  // NULL symbol
+  for _ in 0..<@model.ELF64_SYM_SIZE {
+    out.push(0)
+  }
+
+  for i = 0; i < exported_symbols.length(); i = i + 1 {
+    let sym = exported_symbols[i]
+    let st_name = sym_name_offsets[i]
+    let st_info = ((pie_symbol_binding_to_elf(sym.binding).to_int() << 4) |
+    pie_symbol_type_to_elf(sym.ty).to_int()).to_byte()
+    let st_other = pie_visibility_to_elf(sym.vis)
+    let st_shndx = if sym.output_sec >= 0 {
+      (sym.output_sec + 1).to_uint16()
+    } else {
+      @model.SHN_UNDEF
+    }
+    let st_value = if sym.output_sec >= 0 { sym.output_value } else { 0UL }
+    let st_size = 0UL
+
+    pie_push_u32_le(out, st_name)
+    out.push(st_info)
+    out.push(st_other)
+    out.push((st_shndx.to_uint() & 0xffU).to_byte())
+    out.push(((st_shndx.to_uint() >> 8) & 0xffU).to_byte())
+    pie_push_u64_le(out, st_value)
+    pie_push_u64_le(out, st_size)
+  }
+
+  Bytes::from_array(out)
 }
 
 ///|
@@ -285,16 +376,24 @@ fn pie_extend_load_range(
 fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   let sections = ir.merged_sections
   let mut dyn_needed_offsets : Array[UInt64] = []
+  let exported_symbols : Array[@ir.MergedSymbol] = []
   let mut has_dynamic = false
   if opts.dynamic_libs.length() > 0 {
-    let dyn_build = pie_build_dynstr(opts.dynamic_libs)
+    for sym in ir.merged_symbols {
+      if pie_exportable_symbol(sym) {
+        exported_symbols.push(sym)
+      }
+    }
+
+    let dyn_build = pie_build_dynstr(opts.dynamic_libs, exported_symbols)
+    let dynsym = pie_build_dynsym(exported_symbols, dyn_build.sym_name_offsets)
     dyn_needed_offsets = dyn_build.needed_offsets
     has_dynamic = true
     sections.push({
       output_name: ".dynsym",
       output_index: sections.length(),
       align: 8UL,
-      bytes: b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+      bytes: dynsym,
     })
     sections.push({
       output_name: ".dynstr",

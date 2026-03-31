@@ -63,6 +63,19 @@ fn pie_read_u64_le(bytes : Bytes, off : Int) -> UInt64 {
 }
 
 ///|
+fn pie_read_u16_le(bytes : Bytes, off : Int) -> UInt16 {
+  (bytes[off].to_uint() | (bytes[off + 1].to_uint() << 8)).to_uint16()
+}
+
+///|
+fn pie_read_u32_le(bytes : Bytes, off : Int) -> UInt {
+  bytes[off].to_uint() |
+  (bytes[off + 1].to_uint() << 8) |
+  (bytes[off + 2].to_uint() << 16) |
+  (bytes[off + 3].to_uint() << 24)
+}
+
+///|
 test "write_pie_or_shared rejects relocatable kind" {
   let mut msg = ""
   try {
@@ -136,6 +149,54 @@ test "write_pie_or_shared emits minimal dynamic metadata" {
   inspect(pie_read_u64_le(artifact.bytes, dyn_off + 48), content="6")
   inspect(pie_read_u64_le(artifact.bytes, dyn_off + 64), content="11")
   inspect(pie_read_u64_le(artifact.bytes, dyn_off + 80), content="0")
+}
+
+///|
+test "write_pie_or_shared emits dynsym exported symbols" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 1UL, bytes: b"\x90\xC3" },
+    ],
+    merged_symbols: [
+      {
+        name: "foo",
+        output_sec: 0,
+        output_value: 0UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+  }
+
+  let artifact = write_pie_or_shared(
+    ir,
+    pie_test_opts_with_libs(SharedLibrary, ["libc.so.6"]),
+  ) catch {
+    _ => abort("unexpected writer error")
+  }
+
+  let e_shoff = pie_read_u64_le(artifact.bytes, 40).to_int()
+  let e_shnum = pie_read_u16_le(artifact.bytes, 60).to_int()
+  let sh_entsize = pie_read_u16_le(artifact.bytes, 58).to_int()
+
+  let mut dynsym_size = 0UL
+  let mut dynsym_entsize = 0UL
+  let mut dynsym_link = 0U
+  for i = 0; i < e_shnum; i = i + 1 {
+    let sh_off = e_shoff + i * sh_entsize
+    let sh_type = pie_read_u32_le(artifact.bytes, sh_off + 4)
+    if sh_type == 11 {
+      dynsym_size = pie_read_u64_le(artifact.bytes, sh_off + 32)
+      dynsym_link = pie_read_u32_le(artifact.bytes, sh_off + 40)
+      dynsym_entsize = pie_read_u64_le(artifact.bytes, sh_off + 56)
+    }
+  }
+
+  inspect(dynsym_size, content="48")
+  inspect(dynsym_entsize, content="24")
+  inspect(dynsym_link > 0, content="true")
 }
 
 ///|

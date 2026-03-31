@@ -311,6 +311,7 @@ fn pie_build_dynamic_placeholder(
   has_rela_plt : Bool,
   has_pltgot : Bool,
   has_flags_1 : Bool,
+  has_relacount : Bool,
 ) -> Bytes {
   // DT_NEEDED[*], optional DT_SONAME, DT_STRTAB, DT_STRSZ, DT_HASH,
   // DT_SYMTAB, DT_SYMENT, optional DT_RELA/DT_RELASZ/DT_RELAENT,
@@ -321,7 +322,8 @@ fn pie_build_dynamic_placeholder(
     (if has_rela_dyn { 3 } else { 0 }) +
     (if has_rela_plt { 3 } else { 0 }) +
     (if has_pltgot { 1 } else { 0 }) +
-    (if has_flags_1 { 1 } else { 0 })
+    (if has_flags_1 { 1 } else { 0 }) +
+    (if has_relacount { 1 } else { 0 })
   let out : Array[Byte] = []
   for _ in 0..<(entry_count * 16) {
     out.push(0)
@@ -499,6 +501,18 @@ fn pie_build_dyn_rela_records(
 }
 
 ///|
+fn pie_should_lower_to_relative(ir : @ir.LinkIr, rec : PieDynRelaRec) -> Bool {
+  if !(ir.arch is X86_64) || rec.rel_type != @model.R_X86_64_64 {
+    return false
+  }
+  if rec.target_sym < 0 || rec.target_sym >= ir.merged_symbols.length() {
+    return false
+  }
+  let sym = ir.merged_symbols[rec.target_sym]
+  sym.binding is Local && sym.output_sec >= 0
+}
+
+///|
 fn pie_resolve_entry_addr(
   ir : @ir.LinkIr,
   opts : @ir.LinkOptions,
@@ -614,6 +628,8 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   let mut has_rela_plt = false
   let mut has_pltgot = false
   let mut has_flags_1 = false
+  let mut has_relacount = false
+  let mut rela_relative_count = 0UL
   let mut dyn_rela_recs : Array[PieDynRelaRec] = []
   let mut plt_rela_recs : Array[PieDynRelaRec] = []
   let mut has_dynamic = false
@@ -650,6 +666,12 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
     has_rela_plt = plt_rela_recs.length() > 0
     has_pltgot = has_rela_plt
     has_flags_1 = opts.output_kind is ExecutablePie
+    for rec in dyn_rela_recs {
+      if pie_should_lower_to_relative(ir, rec) {
+        rela_relative_count += 1UL
+      }
+    }
+    has_relacount = rela_relative_count > 0UL
 
     let dyn_build = pie_build_dynstr(
       soname,
@@ -713,6 +735,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
         has_rela_plt,
         has_pltgot,
         has_flags_1,
+        has_relacount,
       ),
     })
     if has_rela_dyn {
@@ -732,6 +755,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
           plt_rela_recs.length() * @model.ELF64_RELA_SIZE,
         )
         |> Bytes::from_array
+
       sections.push({
         output_name: ".rela.plt",
         output_index: sections.length(),
@@ -989,10 +1013,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
       let mut r_addend = rec.addend
 
       // Non-preemptible local absolute relocations can be expressed as RELATIVE.
-      if ir.arch is X86_64 &&
-        rec.rel_type == @model.R_X86_64_64 &&
-        rec.target_sym >= 0 &&
-        rec.target_sym < ir.merged_symbols.length() {
+      if pie_should_lower_to_relative(ir, rec) {
         let sym = ir.merged_symbols[rec.target_sym]
         if sym.binding is Local &&
           sym.output_sec >= 0 &&
@@ -1201,6 +1222,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
     let dt_pltrel = 20UL
     let dt_jmprel = 23UL
     let dt_rela_kind = 7UL
+    let dt_relacount = 0x6ffffff9UL
     let dt_flags_1 = 0x6ffffffbUL
     let df_1_pie = 0x08000000UL
     let dt_strsz = 10UL
@@ -1267,6 +1289,12 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
     }
     if has_flags_1 {
       pie_dynamic_set_entry(file, dynamic_off, dyn_idx, dt_flags_1, df_1_pie)
+      dyn_idx += 1
+    }
+    if has_relacount {
+      pie_dynamic_set_entry(
+        file, dynamic_off, dyn_idx, dt_relacount, rela_relative_count,
+      )
       dyn_idx += 1
     }
     pie_dynamic_set_entry(file, dynamic_off, dyn_idx, dt_null, 0UL)

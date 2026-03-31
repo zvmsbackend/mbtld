@@ -503,6 +503,30 @@ test "write_pie_or_shared lowers local abs64 dynamic reloc to relative" {
     pie_read_u64_le(artifact.bytes, r_off + 16),
     content="\{text_addr + 6UL}",
   )
+
+  let phnum = pie_read_u16_le(artifact.bytes, 56).to_int()
+  let phoff = pie_read_u64_le(artifact.bytes, 32).to_int()
+  let phentsize = pie_read_u16_le(artifact.bytes, 54).to_int()
+  let mut dynamic_off = 0UL
+  for i in 0..<phnum {
+    let p_off = phoff + i * phentsize
+    if pie_read_u32_le(artifact.bytes, p_off) == @model.PT_DYNAMIC {
+      dynamic_off = pie_read_u64_le(artifact.bytes, p_off + 8)
+    }
+  }
+
+  let mut has_relacount = false
+  for i in 0..<24 {
+    let tag = pie_read_u64_le(artifact.bytes, dynamic_off.to_int() + i * 16)
+    let val = pie_read_u64_le(artifact.bytes, dynamic_off.to_int() + i * 16 + 8)
+    if tag == 0x6ffffff9UL {
+      has_relacount = val == 1UL
+    }
+    if tag == 0UL {
+      break
+    }
+  }
+  inspect(has_relacount, content="true")
 }
 
 ///|

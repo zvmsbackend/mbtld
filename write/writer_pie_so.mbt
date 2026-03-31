@@ -507,8 +507,17 @@ fn pie_build_dyn_rela_records(
 }
 
 ///|
+fn pie_symbol_nonpreemptible(sym : @ir.MergedSymbol) -> Bool {
+  sym.binding is Local || sym.vis is (Hidden | Internal | Protected)
+}
+
+///|
 fn pie_should_lower_to_relative(ir : @ir.LinkIr, rec : PieDynRelaRec) -> Bool {
-  if !(ir.arch is X86_64) || rec.rel_type != @model.R_X86_64_64 {
+  if !(ir.arch is X86_64) {
+    return false
+  }
+  if rec.rel_type != @model.R_X86_64_64 &&
+    rec.rel_type != @model.R_X86_64_GLOB_DAT {
     return false
   }
   if rec.target_sym < 0 || rec.target_sym >= ir.merged_symbols.length() {
@@ -518,7 +527,7 @@ fn pie_should_lower_to_relative(ir : @ir.LinkIr, rec : PieDynRelaRec) -> Bool {
   if sym.output_sec < 0 {
     return false
   }
-  sym.binding is Local || sym.vis is Hidden || sym.vis is Internal
+  pie_symbol_nonpreemptible(sym)
 }
 
 ///|
@@ -535,13 +544,7 @@ fn pie_order_dyn_rela_for_relacount(
       rest_part.push(rec)
     }
   }
-  let ordered : Array[PieDynRelaRec] = []
-  for rec in relative_part {
-    ordered.push(rec)
-  }
-  for rec in rest_part {
-    ordered.push(rec)
-  }
+  let ordered = relative_part + rest_part
   { ordered, relative_prefix_count: relative_part.length().to_uint64() }
 }
 

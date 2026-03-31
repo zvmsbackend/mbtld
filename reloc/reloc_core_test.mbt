@@ -50,9 +50,7 @@ fn rc_ir(arch : @ir.Arch) -> @ir.LinkIr {
 ///|
 test "apply_relocations skips patching for relocatable output" {
   let ir = rc_ir(X86_64)
-  let out = apply_relocations(ir, rc_opts(Relocatable)) catch {
-    _ => abort("unexpected reloc error")
-  }
+  let out = apply_relocations(ir, rc_opts(Relocatable))
   inspect(out.merged_sections[0].bytes, content="b\"\\x00\\x00\\x00\\x00\"")
 }
 

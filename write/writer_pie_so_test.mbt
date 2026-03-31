@@ -100,9 +100,7 @@ test "write_pie_or_shared emits merged payload" {
     ],
   }
 
-  let artifact = write_pie_or_shared(ir, pie_test_opts(ExecutablePie)) catch {
-    _ => abort("unexpected writer error")
-  }
+  let artifact = write_pie_or_shared(ir, pie_test_opts(ExecutablePie))
 
   inspect(artifact.bytes[0:4].to_bytes(), content="b\"\\x7fELF\"")
   inspect(artifact.bytes[16], content="b'\\x03'")
@@ -130,9 +128,7 @@ test "write_pie_or_shared emits interp for executable pie" {
     dynamic_linker: Some("/lib64/ld-linux-x86-64.so.2"),
   }
 
-  let artifact = write_pie_or_shared(ir, opts) catch {
-    _ => abort("unexpected writer error")
-  }
+  let artifact = write_pie_or_shared(ir, opts)
 
   inspect(artifact.bytes[56], content="b'\\x04'")
   inspect(artifact.bytes[176], content="b'\\x03'")
@@ -166,9 +162,7 @@ test "write_pie_or_shared writes e_entry from entry symbol" {
   }
   let opts = { ..pie_test_opts(ExecutablePie), entry: "_start" }
 
-  let artifact = write_pie_or_shared(ir, opts) catch {
-    _ => abort("unexpected writer error")
-  }
+  let artifact = write_pie_or_shared(ir, opts)
 
   // data_start is fixed at ELF64_EHDR_SIZE + 4 * ELF64_PHDR_SIZE = 0x120.
   inspect(pie_read_u64_le(artifact.bytes, 24), content="289")
@@ -193,9 +187,7 @@ test "write_pie_or_shared defaults e_entry to _start for executable pie" {
     ],
   }
 
-  let artifact = write_pie_or_shared(ir, pie_test_opts(ExecutablePie)) catch {
-    _ => abort("unexpected writer error")
-  }
+  let artifact = write_pie_or_shared(ir, pie_test_opts(ExecutablePie))
 
   // data_start is fixed at ELF64_EHDR_SIZE + 4 * ELF64_PHDR_SIZE = 0x120.
   inspect(pie_read_u64_le(artifact.bytes, 24), content="288")
@@ -220,9 +212,7 @@ test "write_pie_or_shared defaults e_entry to main when _start missing" {
     ],
   }
 
-  let artifact = write_pie_or_shared(ir, pie_test_opts(ExecutablePie)) catch {
-    _ => abort("unexpected writer error")
-  }
+  let artifact = write_pie_or_shared(ir, pie_test_opts(ExecutablePie))
 
   inspect(pie_read_u64_le(artifact.bytes, 24), content="289")
 }
@@ -240,9 +230,7 @@ test "write_pie_or_shared emits minimal dynamic metadata" {
   let artifact = write_pie_or_shared(
     ir,
     pie_test_opts_with_libs(SharedLibrary, ["libc.so.6"]),
-  ) catch {
-    _ => abort("unexpected writer error")
-  }
+  )
 
   // e_phnum=3 (RX, RW, PT_DYNAMIC)
   inspect(artifact.bytes[56], content="b'\\x03'")
@@ -287,9 +275,7 @@ test "write_pie_or_shared emits dynsym exported symbols" {
   let artifact = write_pie_or_shared(
     ir,
     pie_test_opts_with_libs(SharedLibrary, ["libc.so.6"]),
-  ) catch {
-    _ => abort("unexpected writer error")
-  }
+  )
 
   let e_shoff = pie_read_u64_le(artifact.bytes, 40).to_int()
   let e_shnum = pie_read_u16_le(artifact.bytes, 60).to_int()
@@ -335,9 +321,7 @@ test "write_pie_or_shared emits hash section linked to dynsym" {
   let artifact = write_pie_or_shared(
     ir,
     pie_test_opts_with_libs(SharedLibrary, ["libc.so.6"]),
-  ) catch {
-    _ => abort("unexpected writer error")
-  }
+  )
 
   let e_shoff = pie_read_u64_le(artifact.bytes, 40).to_int()
   let e_shnum = pie_read_u16_le(artifact.bytes, 60).to_int()
@@ -391,9 +375,7 @@ test "write_pie_or_shared emits soname without needed libs" {
     output: "build/out/libmbtld.so",
   }
 
-  let artifact = write_pie_or_shared(ir, opts) catch {
-    _ => abort("unexpected writer error")
-  }
+  let artifact = write_pie_or_shared(ir, opts)
 
   let dyn_off = pie_read_u64_le(artifact.bytes, 184).to_int()
   // DT_SONAME should be first tag when no DT_NEEDED exists.

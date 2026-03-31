@@ -1,9 +1,7 @@
 ///|
 test "R_X86_64_64 writes little-endian value" {
   let input = b"\x00\x00\x00\x00\x00\x00\x00\x00"
-  let out = apply_x86_64_reloc(input, 0, 1, 0x1122334455667788UL, 0, 0) catch {
-    _ => abort("unexpected relocation error")
-  }
+  let out = apply_x86_64_reloc(input, 0, 1, 0x1122334455667788UL, 0, 0)
   assert_eq(out, b"\x88\x77\x66\x55\x44\x33\x22\x11")
 }
 

@@ -19,9 +19,7 @@ fn p_opts() -> @ir.LinkOptions {
 
 ///|
 test "run_pipeline emits baseline diagnostics" {
-  let result = run_pipeline([], p_opts()) catch {
-    _ => abort("unexpected pipeline error")
-  }
+  let result = run_pipeline([], p_opts())
 
   let codes = result.diagnostics.map(d => d.code)
   assert_true(codes.contains("PIPELINE_INFO"))

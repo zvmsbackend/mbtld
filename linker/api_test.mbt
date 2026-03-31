@@ -21,7 +21,7 @@ fn mk_opts(inputs : Array[String]) -> @ir.LinkOptions {
 test "link rejects empty input list" {
   let mut msg = ""
   try {
-    [] |> mk_opts |> link |> ignore
+    link(mk_opts([])) |> ignore
     abort("expected error")
   } catch {
     @ir.Cli(@ir.InvalidArgs(m)) => msg = m

@@ -46,9 +46,7 @@ fn mk_input(path : String, raw : Bytes) -> @ir.InputObject {
 test "write_relocatable passthrough one object" {
   let raw = b"\x7fELF\x02\x01\x01\x00"
   let ir = mk_ir([mk_input("a.o", raw)])
-  let artifact = write_relocatable(ir, test_opts()) catch {
-    _ => abort("unexpected writer error")
-  }
+  let artifact = write_relocatable(ir, test_opts())
   inspect(artifact.bytes, content="b\"\\x7fELF\\x02\\x01\\x01\\x00\"")
 }
 
@@ -77,9 +75,7 @@ test "write_relocatable emits merged section payload" {
     ],
   }
 
-  let artifact = write_relocatable(ir, test_opts()) catch {
-    _ => abort("unexpected writer error")
-  }
+  let artifact = write_relocatable(ir, test_opts())
 
   inspect(artifact.bytes[0:4].to_bytes(), content="b\"\\x7fELF\"")
   inspect(artifact.bytes[16], content="b'\\x01'")

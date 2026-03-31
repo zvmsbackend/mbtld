@@ -36,17 +36,9 @@ test "IoCursor reads little-endian integers" {
   let data : Bytes = [0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00]
   let cursor = @base.IoCursor::new(data)
 
-  let val = cursor.read_u32_le() |> unwrap
+  let val = cursor.read_u32_le().unwrap()
   inspect(val, content="1")
 
-  let val2 = cursor.read_u32_le() |> unwrap
+  let val2 = cursor.read_u32_le().unwrap()
   inspect(val2, content="2")
-}
-
-///|
-fn unwrap(result : Result[UInt, String]) -> UInt {
-  match result {
-    Ok(v) => v
-    Err(msg) => abort("unwrap failed: \{msg}")
-  }
 }

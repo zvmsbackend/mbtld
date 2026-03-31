@@ -191,8 +191,8 @@ fn rr_build_symtab_and_strtab(ir : @ir.LinkIr) -> RrSymtabBuild {
     symtab.push(0)
   }
 
-  for i in 0..<ordered.length() {
-    let (orig_idx, sym) = ordered[i]
+  for i, entry in ordered {
+    let (orig_idx, sym) = entry
     sym_index_map[orig_idx] = i + 1
     let st_name = st_name_offsets[i]
     let st_info = ((rr_symbol_binding_to_elf(sym.binding).to_int() << 4) |
@@ -229,8 +229,8 @@ fn rr_build_reloc_sections(
   sym_index_map : Array[Int],
 ) -> Array[RrRelocSection] {
   let relocs : Array[RrRelocSection] = []
-  for out_sec in 0..<ir.merged_sections.length() {
-    let out_name = ir.merged_sections[out_sec].output_name
+  for out_sec, sec in ir.merged_sections {
+    let out_name = sec.output_name
     let out_rela : Array[Byte] = []
     let out_rel : Array[Byte] = []
     let mut has_rela = false
@@ -311,8 +311,7 @@ fn rr_build_elf64_relocatable(ir : @ir.LinkIr) -> Bytes {
   let file = [b'\x00'].repeat(@model.ELF64_EHDR_SIZE)
 
   let mut cursor = @model.ELF64_EHDR_SIZE
-  for i in 0..<ir.merged_sections.length() {
-    let sec = ir.merged_sections[i]
+  for i, sec in ir.merged_sections {
     let sec_ty = rr_infer_sh_type(sec.output_name)
     let sec_flags = rr_infer_sh_flags(sec.output_name)
     let sec_align = if sec.align == 0UL { 1UL } else { sec.align }
@@ -348,8 +347,7 @@ fn rr_build_elf64_relocatable(ir : @ir.LinkIr) -> Bytes {
   let strtab_idx = symtab_idx + 1
   let rel_name_base = ir.merged_sections.length()
 
-  for i in 0..<reloc_sections.length() {
-    let relsec = reloc_sections[i]
+  for i, relsec in reloc_sections {
     cursor = rr_align_up_int(cursor, 8UL)
     let rel_off = cursor.to_uint64()
     for _ in file.length()..<cursor {

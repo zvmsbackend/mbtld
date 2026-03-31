@@ -23,6 +23,7 @@ fn pie_machine_from_arch(arch : @ir.Arch) -> UInt16 {
 fn pie_infer_sh_type(name : String) -> UInt {
   match name {
     ".dynamic" => @model.SHT_DYNAMIC
+    ".hash" => @model.SHT_HASH
     ".rela.dyn" => @model.SHT_RELA
     ".dynsym" => @model.SHT_DYNSYM
     ".dynstr" => @model.SHT_STRTAB
@@ -202,9 +203,8 @@ fn pie_build_dynstr(
 ///|
 fn pie_output_basename(path : String) -> String {
   let mut last_sep = -1
-  for i in 0..<path.length() {
-    let ch = path[i]
-    if ch == 47 || ch == 92 {
+  for i, ch in path {
+    if ch == '/' || ch == '\\' {
       last_sep = i
     }
   }
@@ -270,8 +270,7 @@ fn pie_build_sysv_hash(exported_symbols : Array[@ir.MergedSymbol]) -> Bytes {
   let buckets = [0U].repeat(nbucket)
   let chains = [0U].repeat(nchain)
 
-  for i in 0..<exported_symbols.length() {
-    let sym = exported_symbols[i]
+  for i, sym in exported_symbols {
     let sym_index = i + 1
     let b = pie_sysv_hash(sym.name) % nbucket.reinterpret_as_uint()
     let bi = b.reinterpret_as_int()
@@ -540,8 +539,8 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
 
     // Build a map from merged symbol index to dynsym index (0 means STN_UNDEF).
     let mut dynsym_cursor = 1
-    for i in 0..<ir.merged_symbols.length() {
-      if pie_exportable_symbol(ir.merged_symbols[i]) {
+    for i, sym in ir.merged_symbols {
+      if pie_exportable_symbol(sym) {
         dynsym_index_map[i] = dynsym_cursor
         dynsym_cursor += 1
       }
@@ -653,8 +652,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   let mut rela_dyn_shidx = 0
   let merged_sec_count = ir.merged_sections.length()
   let section_addrs = [0UL].repeat(merged_sec_count)
-  for i in 0..<sections.length() {
-    let sec = sections[i]
+  for i, sec in sections {
     let sec_ty = pie_infer_sh_type(sec.output_name)
     let sec_flags = pie_infer_sh_flags(sec.output_name)
     let sec_entsize = pie_infer_sh_entsize(sec.output_name, sec_ty)

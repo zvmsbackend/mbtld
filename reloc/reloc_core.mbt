@@ -65,6 +65,15 @@ pub fn apply_relocations(
           pending.addend,
           pending.patch_off,
         )
+      RISCV64 =>
+        apply_riscv64_reloc(
+          sec.bytes,
+          pending.patch_off,
+          pending.rel_type,
+          sym_value,
+          pending.addend,
+          pending.patch_off,
+        )
       _ => raise UnsupportedRelocType(pending.rel_type)
     }
 

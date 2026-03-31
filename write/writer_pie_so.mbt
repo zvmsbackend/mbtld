@@ -220,6 +220,8 @@ priv struct PieDynRelaRec {
   patch_off : UInt64
   r_info : UInt64
   addend : Int64
+  rel_type : UInt
+  target_sym : Int
 }
 
 ///|
@@ -482,6 +484,8 @@ fn pie_build_dyn_rela_records(
       patch_off: reloc.patch_off,
       r_info: (sym_idx << 32) | reloc.rel_type.to_uint64(),
       addend: reloc.addend,
+      rel_type: reloc.rel_type,
+      target_sym: reloc.target_sym,
     }
     if ir.arch is X86_64 && reloc.rel_type == @model.R_X86_64_JUMP_SLOT {
       rela_plt.push(rec)
@@ -762,6 +766,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   let mut vcursor = data_start
   let mut rx_range = pie_empty_load_range()
   let mut rw_range = pie_empty_load_range()
+  let mut relro_range = pie_empty_load_range()
   let mut dynstr_addr = 0UL
   let mut dynstr_size = 0UL
   let mut interp_off = 0UL
@@ -878,6 +883,16 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
           sec_addr,
           sec.bytes.length().to_uint64(),
         )
+        if sec.output_name == ".got.plt" {
+          relro_range = pie_extend_load_range(
+            relro_range,
+            sec_ty,
+            sec_flags,
+            sec_off,
+            sec_addr,
+            sec.bytes.length().to_uint64(),
+          )
+        }
       } else {
         rx_range = pie_extend_load_range(
           rx_range,
@@ -967,9 +982,27 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
       }
       let r_off = section_addrs[rec.out_sec] + rec.patch_off
       let entry_off = rela_dyn_off.to_int() + i * @model.ELF64_RELA_SIZE
+      let mut r_info = rec.r_info
+      let mut r_addend = rec.addend
+
+      // Non-preemptible local absolute relocations can be expressed as RELATIVE.
+      if ir.arch is X86_64 &&
+        rec.rel_type == @model.R_X86_64_64 &&
+        rec.target_sym >= 0 &&
+        rec.target_sym < ir.merged_symbols.length() {
+        let sym = ir.merged_symbols[rec.target_sym]
+        if sym.binding is Local &&
+          sym.output_sec >= 0 &&
+          sym.output_sec < section_addrs.length() {
+          r_info = @model.R_X86_64_RELATIVE.to_uint64()
+          let sym_addr = section_addrs[sym.output_sec] + sym.output_value
+          r_addend = rec.addend + sym_addr.reinterpret_as_int64()
+        }
+      }
+
       pie_write_u64_le(file, entry_off, r_off)
-      pie_write_u64_le(file, entry_off + 8, rec.r_info)
-      pie_write_u64_le(file, entry_off + 16, rec.addend.reinterpret_as_uint64())
+      pie_write_u64_le(file, entry_off + 8, r_info)
+      pie_write_u64_le(file, entry_off + 16, r_addend.reinterpret_as_uint64())
     }
   }
 
@@ -1066,7 +1099,8 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   let ph_count = (if rx_range.has_alloc { 1 } else { 0 }) +
     (if rw_range.has_alloc { 1 } else { 0 }) +
     (if has_interp { 1 } else { 0 }) +
-    (if has_dynamic { 1 } else { 0 })
+    (if has_dynamic { 1 } else { 0 }) +
+    (if relro_range.has_alloc { 1 } else { 0 })
   pie_write_u16_le(file, 56, ph_count.to_uint16())
   pie_write_u16_le(file, 58, @model.ELF64_SHDR_SIZE.to_uint16())
   pie_write_u16_le(file, 60, shdrs.length().to_uint16())
@@ -1126,6 +1160,25 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
     pie_write_u64_le(file, ph_off + 32, dynamic_size)
     pie_write_u64_le(file, ph_off + 40, dynamic_size)
     pie_write_u64_le(file, ph_off + 48, 8UL)
+    ph_idx += 1
+  }
+
+  if relro_range.has_alloc {
+    let ph_off = e_phoff.to_int() + ph_idx * @model.ELF64_PHDR_SIZE
+    let file_start = relro_range.file_start
+    let file_end = @cmp.maximum(relro_range.file_end, file_start)
+    pie_write_u32_le(file, ph_off, @model.PT_GNU_RELRO)
+    pie_write_u32_le(file, ph_off + 4, @model.PF_R)
+    pie_write_u64_le(file, ph_off + 8, file_start)
+    pie_write_u64_le(file, ph_off + 16, relro_range.mem_start)
+    pie_write_u64_le(file, ph_off + 24, relro_range.mem_start)
+    pie_write_u64_le(file, ph_off + 32, file_end - file_start)
+    pie_write_u64_le(
+      file,
+      ph_off + 40,
+      relro_range.mem_end - relro_range.mem_start,
+    )
+    pie_write_u64_le(file, ph_off + 48, 1UL)
   }
 
   if has_dynamic {

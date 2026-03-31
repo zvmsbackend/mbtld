@@ -395,6 +395,74 @@ test "write_pie_or_shared emits rela.dyn and DT_RELA tags" {
 }
 
 ///|
+test "write_pie_or_shared lowers local abs64 dynamic reloc to relative" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      {
+        output_name: ".text",
+        output_index: 0,
+        align: 8UL,
+        bytes: b"\x90\x90\xC3",
+      },
+      { output_name: ".data", output_index: 1, align: 8UL, bytes: b"\x00\x00" },
+    ],
+    merged_symbols: [
+      {
+        name: "a.o:local_func",
+        output_sec: 0,
+        output_value: 1UL,
+        binding: Local,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+    pending_relocs: [
+      {
+        out_sec: 1,
+        patch_off: 0UL,
+        rel_type: @model.R_X86_64_64,
+        target_sym: 0,
+        addend: 5L,
+        has_addend: true,
+      },
+    ],
+  }
+
+  let artifact = write_pie_or_shared(ir, pie_test_opts(SharedLibrary))
+
+  let e_shoff = pie_read_u64_le(artifact.bytes, 40).to_int()
+  let e_shnum = pie_read_u16_le(artifact.bytes, 60).to_int()
+  let sh_entsize = pie_read_u16_le(artifact.bytes, 58).to_int()
+
+  let mut text_addr = 0UL
+  let mut rela_off = 0UL
+  for i in 0..<e_shnum {
+    let sh_off = e_shoff + i * sh_entsize
+    let sh_type = pie_read_u32_le(artifact.bytes, sh_off + 4)
+    let sh_flags = pie_read_u64_le(artifact.bytes, sh_off + 8)
+    let sh_addr = pie_read_u64_le(artifact.bytes, sh_off + 16)
+    let sh_off_val = pie_read_u64_le(artifact.bytes, sh_off + 24)
+    let sh_size = pie_read_u64_le(artifact.bytes, sh_off + 32)
+    if sh_type == @model.SHT_PROGBITS &&
+      (sh_flags & @model.SHF_EXECINSTR) != 0UL &&
+      sh_size == 3UL {
+      text_addr = sh_addr
+    }
+    if sh_type == @model.SHT_RELA && sh_size == 24UL {
+      rela_off = sh_off_val
+    }
+  }
+
+  let r_off = rela_off.to_int()
+  inspect(pie_read_u64_le(artifact.bytes, r_off + 8), content="8")
+  inspect(
+    pie_read_u64_le(artifact.bytes, r_off + 16),
+    content="\{text_addr + 6UL}",
+  )
+}
+
+///|
 test "write_pie_or_shared emits rela.plt and DT_JMPREL tags" {
   let ir = {
     ..pie_mk_ir(b"\x7fELF"),
@@ -574,6 +642,16 @@ test "write_pie_or_shared emits got.plt and DT_PLTGOT tag" {
 
   let dyn_off = pie_read_u64_le(artifact.bytes, 184).to_int()
   let mut has_dt_pltgot = false
+  let phnum = pie_read_u16_le(artifact.bytes, 56).to_int()
+  let phoff = pie_read_u64_le(artifact.bytes, 32).to_int()
+  let phentsize = pie_read_u16_le(artifact.bytes, 54).to_int()
+  let mut has_relro_phdr = false
+  for i in 0..<phnum {
+    let p_off = phoff + i * phentsize
+    if pie_read_u32_le(artifact.bytes, p_off) == @model.PT_GNU_RELRO {
+      has_relro_phdr = true
+    }
+  }
   for i in 0..<20 {
     let tag = pie_read_u64_le(artifact.bytes, dyn_off + i * 16)
     let val = pie_read_u64_le(artifact.bytes, dyn_off + i * 16 + 8)
@@ -585,6 +663,7 @@ test "write_pie_or_shared emits got.plt and DT_PLTGOT tag" {
     }
   }
   inspect(has_dt_pltgot, content="true")
+  inspect(has_relro_phdr, content="true")
 }
 
 ///|

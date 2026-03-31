@@ -21,6 +21,9 @@ pub const PT_SHLIB : UInt = 5
 pub const PT_PHDR : UInt = 6
 
 ///|
+pub const PT_GNU_RELRO : UInt = 0x6474E552
+
+///|
 /// Program header flags
 pub const PF_X : UInt = 0x1
 

@@ -56,6 +56,15 @@ pub fn apply_relocations(
           pending.addend,
           pending.patch_off,
         )
+      AARCH64 =>
+        apply_aarch64_reloc(
+          sec.bytes,
+          pending.patch_off,
+          pending.rel_type,
+          sym_value,
+          pending.addend,
+          pending.patch_off,
+        )
       _ => raise UnsupportedRelocType(pending.rel_type)
     }
 
@@ -83,7 +92,7 @@ fn is_x86_64_reloc_supported(rel_type : UInt) -> Bool {
 
 ///|
 fn is_aarch64_reloc_supported(rel_type : UInt) -> Bool {
-  rel_type >= 257 && rel_type <= 262
+  rel_type == 257 || rel_type == 258 || rel_type == 260 || rel_type == 261
 }
 
 ///|

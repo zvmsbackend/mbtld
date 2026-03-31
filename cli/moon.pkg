@@ -3,6 +3,7 @@ import {
   "sennenki/mbtld/linker",
   "moonbitlang/core/argparse",
   "moonbitlang/core/string",
+  "moonbitlang/x/fs",
   "moonbitlang/x/sys",
 }
 

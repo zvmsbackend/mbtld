@@ -57,6 +57,7 @@ pub(all) enum Visibility {
 /// Input object representation
 pub(all) struct InputObject {
   path : String
+  raw : Bytes
   arch : Arch
   bitness : Bitness
   sections : Array[SectionRec]
@@ -106,6 +107,7 @@ pub(all) struct RelocRec {
 pub(all) struct LinkIr {
   arch : Arch
   bitness : Bitness
+  input_objects : Array[InputObject]
   merged_sections : Array[MergedSection]
   merged_symbols : Array[MergedSymbol]
   pending_relocs : Array[PendingReloc]

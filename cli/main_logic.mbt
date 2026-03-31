@@ -49,8 +49,11 @@ pub fn run_cli(args : Array[String]) -> Int {
 }
 
 ///|
-fn write_output(path : String, bytes : Bytes) -> Unit {
-  // TODO: implement file writing
+fn write_output(path : String, bytes : Bytes) -> Unit raise @ir.LinkError {
+  @fs.write_bytes_to_file(path, bytes) catch {
+    @fs.IOError(msg) =>
+      raise @ir.Write(SerializeFailure("cannot write output \{path}: \{msg}"))
+  }
 }
 
 ///|

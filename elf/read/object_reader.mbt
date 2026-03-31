@@ -7,6 +7,7 @@ pub struct InputObject {
 ///|
 pub struct ParsedObject {
   path : String
+  raw : Bytes
   e_type : UInt16
   e_machine : UInt16
   sections : Array[ParsedSection]
@@ -78,6 +79,7 @@ pub fn parse_object(data : Bytes, path : String) -> ParsedObject raise ElfError 
   let relocations = parse_relocations(named_sections, data)
   {
     path,
+    raw: data,
     e_type: header.e_type,
     e_machine: header.e_machine,
     sections: named_sections,
@@ -292,7 +294,7 @@ fn read_section_header(
     sh_info,
     sh_addralign,
     sh_entsize,
-    data,
+    data: sec_data,
   }
 }
 

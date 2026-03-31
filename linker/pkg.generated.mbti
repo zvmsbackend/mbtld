@@ -2,11 +2,14 @@
 package "sennenki/mbtld/linker"
 
 import {
+  "sennenki/mbtld/elf/read",
   "sennenki/mbtld/ir",
 }
 
 // Values
 pub fn build_ir(Array[@ir.InputObject], @ir.LinkOptions) -> @ir.LinkIr
+
+pub fn from_parsed_object(@read.ParsedObject) -> @ir.InputObject
 
 pub fn link(@ir.LinkOptions) -> @ir.LinkArtifact raise @ir.LinkError
 

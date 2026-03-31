@@ -99,14 +99,15 @@ fn convert_relocation(
 
 ///|
 /// Convert parsed object to IR input object
-fn convert_parsed_object(parsed : @read.ParsedObject) -> @ir.InputObject {
+pub fn from_parsed_object(parsed : @read.ParsedObject) -> @ir.InputObject {
   let sections = parsed.sections.mapi((idx, sec) => convert_section(sec, idx))
   let symbols = parsed.symbols.mapi((idx, sym) => convert_symbol(sym, idx))
-  let relocs = parsed.relocations.mapi((idx, reloc) => {
+  let relocs = parsed.relocations.mapi((_idx, reloc) => {
     convert_relocation(reloc, parsed.sections)
   })
   {
     path: parsed.path,
+    raw: parsed.raw,
     arch: machine_to_arch(parsed.e_machine),
     bitness: @ir.ELF64,
     sections,
@@ -119,7 +120,7 @@ fn convert_parsed_object(parsed : @read.ParsedObject) -> @ir.InputObject {
 /// Build intermediate representation from inputs
 pub fn build_ir(
   input_objects : Array[@ir.InputObject],
-  opts : @ir.LinkOptions,
+  _opts : @ir.LinkOptions,
 ) -> @ir.LinkIr {
   // Determine architecture from first object (or use default)
   let arch = if input_objects.length() > 0 {
@@ -132,6 +133,7 @@ pub fn build_ir(
   {
     arch,
     bitness: @ir.ELF64,
+    input_objects,
     merged_sections: [],
     merged_symbols: [],
     pending_relocs: [],

@@ -484,6 +484,79 @@ test "write_pie_or_shared emits rela.plt and DT_JMPREL tags" {
 }
 
 ///|
+test "write_pie_or_shared emits got.plt and DT_PLTGOT tag" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 8UL, bytes: b"\x90\xC3" },
+      { output_name: ".data", output_index: 1, align: 8UL, bytes: b"\x00\x00" },
+    ],
+    merged_symbols: [
+      {
+        name: "puts",
+        output_sec: -1,
+        output_value: 0UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+    pending_relocs: [
+      {
+        out_sec: 1,
+        patch_off: 0UL,
+        rel_type: @model.R_X86_64_JUMP_SLOT,
+        target_sym: 0,
+        addend: 0L,
+        has_addend: true,
+      },
+    ],
+  }
+
+  let artifact = write_pie_or_shared(
+    ir,
+    pie_test_opts_with_libs(SharedLibrary, ["libc.so.6"]),
+  )
+
+  let e_shoff = pie_read_u64_le(artifact.bytes, 40).to_int()
+  let e_shnum = pie_read_u16_le(artifact.bytes, 60).to_int()
+  let sh_entsize = pie_read_u16_le(artifact.bytes, 58).to_int()
+
+  let mut got_plt_addr = 0UL
+  let mut got_plt_size = 0UL
+  for i in 0..<e_shnum {
+    let sh_off = e_shoff + i * sh_entsize
+    let sh_type = pie_read_u32_le(artifact.bytes, sh_off + 4)
+    let sh_size = pie_read_u64_le(artifact.bytes, sh_off + 32)
+    let sh_addr = pie_read_u64_le(artifact.bytes, sh_off + 16)
+    let sh_entsize_val = pie_read_u64_le(artifact.bytes, sh_off + 56)
+    // .got.plt is PROGBITS + alloc/write with entsize 0 and size 32 for 1 JUMP_SLOT entry.
+    if sh_type == @model.SHT_PROGBITS &&
+      sh_size == 32UL &&
+      sh_entsize_val == 0UL {
+      got_plt_addr = sh_addr
+      got_plt_size = sh_size
+    }
+  }
+
+  inspect(got_plt_size, content="32")
+
+  let dyn_off = pie_read_u64_le(artifact.bytes, 184).to_int()
+  let mut has_dt_pltgot = false
+  for i in 0..<20 {
+    let tag = pie_read_u64_le(artifact.bytes, dyn_off + i * 16)
+    let val = pie_read_u64_le(artifact.bytes, dyn_off + i * 16 + 8)
+    if tag == 3UL {
+      has_dt_pltgot = val == got_plt_addr && got_plt_addr > 0UL
+    }
+    if tag == 0UL {
+      break
+    }
+  }
+  inspect(has_dt_pltgot, content="true")
+}
+
+///|
 test "write_pie_or_shared emits dynsym exported symbols" {
   let ir = {
     ..pie_mk_ir(b"\x7fELF"),

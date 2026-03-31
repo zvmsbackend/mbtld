@@ -46,6 +46,7 @@ fn pie_infer_sh_flags(name : String) -> UInt64 {
     ".dynstr" => @model.SHF_ALLOC
     ".rela.dyn" => @model.SHF_ALLOC
     ".rela.plt" => @model.SHF_ALLOC
+    ".got.plt" => @model.SHF_ALLOC | @model.SHF_WRITE
     ".dynamic" => @model.SHF_ALLOC | @model.SHF_WRITE
     ".rodata" => @model.SHF_ALLOC
     _ => @model.SHF_ALLOC | @model.SHF_WRITE
@@ -238,6 +239,7 @@ fn pie_build_dynamic_placeholder(
   has_soname : Bool,
   has_rela_dyn : Bool,
   has_rela_plt : Bool,
+  has_pltgot : Bool,
 ) -> Bytes {
   // DT_NEEDED[*], optional DT_SONAME, DT_STRTAB, DT_STRSZ, DT_HASH,
   // DT_SYMTAB, DT_SYMENT, optional DT_RELA/DT_RELASZ/DT_RELAENT,
@@ -246,7 +248,8 @@ fn pie_build_dynamic_placeholder(
     (if has_soname { 1 } else { 0 }) +
     6 +
     (if has_rela_dyn { 3 } else { 0 }) +
-    (if has_rela_plt { 3 } else { 0 })
+    (if has_rela_plt { 3 } else { 0 }) +
+    (if has_pltgot { 1 } else { 0 })
   let out : Array[Byte] = []
   for _ in 0..<(entry_count * 16) {
     out.push(0)
@@ -535,6 +538,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   let dynsym_index_map = [0].repeat(ir.merged_symbols.length())
   let mut has_rela_dyn = false
   let mut has_rela_plt = false
+  let mut has_pltgot = false
   let mut dyn_rela_recs : Array[PieDynRelaRec] = []
   let mut plt_rela_recs : Array[PieDynRelaRec] = []
   let mut has_dynamic = false
@@ -569,6 +573,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
     plt_rela_recs = rela_build.rela_plt
     has_rela_dyn = dyn_rela_recs.length() > 0
     has_rela_plt = plt_rela_recs.length() > 0
+    has_pltgot = has_rela_plt
 
     let dyn_build = pie_build_dynstr(
       soname,
@@ -599,6 +604,17 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
       align: 1UL,
       bytes: dyn_build.dynstr,
     })
+    if has_pltgot {
+      // x86_64 .got.plt reserves first 3 entries for the lazy resolver ABI.
+      let slot_count = 3 + plt_rela_recs.length()
+      let got_plt = [b'\x00'].repeat(slot_count * 8) |> Bytes::from_array
+      sections.push({
+        output_name: ".got.plt",
+        output_index: sections.length(),
+        align: 8UL,
+        bytes: got_plt,
+      })
+    }
     sections.push({
       output_name: ".dynamic",
       output_index: sections.length(),
@@ -608,6 +624,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
         dyn_has_soname,
         has_rela_dyn,
         has_rela_plt,
+        has_pltgot,
       ),
     })
     if has_rela_dyn {
@@ -676,6 +693,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   let mut dynamic_off = 0UL
   let mut dynamic_addr = 0UL
   let mut dynamic_size = 0UL
+  let mut got_plt_addr = 0UL
   let mut rela_dyn_off = 0UL
   let mut rela_dyn_addr = 0UL
   let mut rela_dyn_size = 0UL
@@ -743,6 +761,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
         dynamic_size = sec.bytes.length().to_uint64()
         dynamic_shidx = sh_index
       }
+      ".got.plt" => got_plt_addr = sec_addr
       ".rela.dyn" => {
         rela_dyn_off = sec_off
         rela_dyn_addr = sec_addr
@@ -1007,6 +1026,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
     let dt_rela = 7UL
     let dt_relasz = 8UL
     let dt_relaent = 9UL
+    let dt_pltgot = 3UL
     let dt_pltrelsz = 2UL
     let dt_pltrel = 20UL
     let dt_jmprel = 23UL
@@ -1067,6 +1087,10 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
       pie_dynamic_set_entry(
         file, dynamic_off, dyn_idx, dt_jmprel, rela_plt_addr,
       )
+      dyn_idx += 1
+    }
+    if has_pltgot {
+      pie_dynamic_set_entry(file, dynamic_off, dyn_idx, dt_pltgot, got_plt_addr)
       dyn_idx += 1
     }
     pie_dynamic_set_entry(file, dynamic_off, dyn_idx, dt_null, 0UL)

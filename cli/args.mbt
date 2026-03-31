@@ -32,6 +32,21 @@ fn linker_command() -> @argparse.Command {
         about="Generate shared library",
       ),
       @argparse.FlagArg::new(
+        "efi-application",
+        long="efi-application",
+        about="Generate EFI application",
+      ),
+      @argparse.FlagArg::new(
+        "efi-boot-driver",
+        long="efi-boot-driver",
+        about="Generate EFI boot driver",
+      ),
+      @argparse.FlagArg::new(
+        "efi-runtime-driver",
+        long="efi-runtime-driver",
+        about="Generate EFI runtime driver",
+      ),
+      @argparse.FlagArg::new(
         "strip-symbols",
         long="strip-symbols",
         about="Strip symbol table",
@@ -80,6 +95,11 @@ fn linker_command() -> @argparse.Command {
         long="dynamic-linker",
         about="Dynamic linker path",
       ),
+      @argparse.OptionArg::new(
+        "include-dynamic-library",
+        long="include-dynamic-library",
+        about="Include dynamic library name (repeatable)",
+      ),
     ],
     positionals=[
       @argparse.PositionArg::new(
@@ -105,6 +125,12 @@ pub fn parse_args(args : Array[String]) -> @ir.LinkOptions raise @ir.CliError {
     ExecutablePie
   } else if matches.flags.contains("shared") {
     SharedLibrary
+  } else if matches.flags.contains("efi-application") {
+    EfiApplication
+  } else if matches.flags.contains("efi-boot-driver") {
+    EfiBootDriver
+  } else if matches.flags.contains("efi-runtime-driver") {
+    EfiRuntimeDriver
   } else {
     Relocatable
   }
@@ -124,12 +150,17 @@ pub fn parse_args(args : Array[String]) -> @ir.LinkOptions raise @ir.CliError {
     input_files.append(input)
   }
 
+  let dynamic_libs : Array[String] = []
+  for lib_name in matches.values.get("include-dynamic-library") {
+    dynamic_libs.append(lib_name)
+  }
+
   {
     output: matches.values.get_or_default("output", []).get(0).unwrap_or(""),
     output_kind,
     entry: matches.values.get_or_default("entry", []).get(0).unwrap_or(""),
     input_files,
-    dynamic_libs: [],
+    dynamic_libs,
     dynamic_linker: matches.values.get_or_default("dynamic-linker", []).get(0),
     strip_symbols: matches.flags.contains("strip-symbols"),
     strip_debug: matches.flags.contains("strip-debug"),

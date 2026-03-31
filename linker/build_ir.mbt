@@ -83,17 +83,108 @@ fn convert_symbol(sym : @read.ParsedSymbol, _sym_idx : Int) -> @ir.SymbolRec {
 /// Convert parsed relocation to IR relocation record
 fn convert_relocation(
   reloc : @read.ParsedRelocation,
-  _sections : Array[@read.ParsedSection],
+  sections : Array[@read.ParsedSection],
 ) -> @ir.RelocRec {
+  let target_name = strip_reloc_prefix(reloc.section_name)
+  let sec_index = match sections.search_by(sec => sec.name == target_name) {
+    Some(i) => i
+    None => -1
+  }
+
   // Extract symbol index from r_info (upper 32 bits)
   let sym_idx = (reloc.r_info >> 32).to_int()
   {
-    sec_index: 0, // Will be resolved later
+    sec_index,
     offset: reloc.r_offset,
     rel_type: (reloc.r_info & 0xffffffff).to_uint(),
     sym_index: sym_idx,
     addend: reloc.r_addend,
     has_addend: reloc.has_addend,
+  }
+}
+
+///|
+fn starts_with(s : String, prefix : String) -> Bool {
+  if prefix.length() > s.length() {
+    return false
+  }
+  s[:prefix.length()].to_string() == prefix
+}
+
+///|
+fn strip_reloc_prefix(name : String) -> String {
+  if starts_with(name, ".rela") {
+    name[5:].to_string()
+  } else if starts_with(name, ".rel") {
+    name[4:].to_string()
+  } else {
+    name
+  }
+}
+
+///|
+fn should_merge_section(sec : @ir.SectionRec) -> Bool {
+  if sec.name == "" {
+    return false
+  }
+  if sec.data.length() == 0 {
+    return false
+  }
+  if sec.name == ".symtab" || sec.name == ".strtab" || sec.name == ".shstrtab" {
+    return false
+  }
+  !starts_with(sec.name, ".rel")
+}
+
+///|
+fn align_up_int(value : Int, align : UInt64) -> Int {
+  let a = align.to_int()
+  if a <= 1 {
+    return value
+  }
+  ((value + a - 1) / a) * a
+}
+
+///|
+fn append_with_padding(base : Bytes, pad : Int, tail : Bytes) -> Bytes {
+  let out = base.to_array()
+  for _ in 0..<pad {
+    out.push(0)
+  }
+  for b in tail {
+    out.push(b)
+  }
+  Bytes::from_array(out)
+}
+
+///|
+fn normalized_symbol_name(path : String, sym : @ir.SymbolRec) -> String {
+  if sym.binding == @ir.Local {
+    "\{path}:\{sym.name}"
+  } else {
+    sym.name
+  }
+}
+
+///|
+fn find_merged_section_index(
+  merged_sections : Array[@ir.MergedSection],
+  name : String,
+) -> Int {
+  match merged_sections.search_by(sec => sec.output_name == name) {
+    Some(i) => i
+    None => -1
+  }
+}
+
+///|
+fn find_merged_symbol_index(
+  merged_symbols : Array[@ir.MergedSymbol],
+  name : String,
+) -> Int {
+  match merged_symbols.search_by(sym => sym.name == name) {
+    Some(i) => i
+    None => -1
   }
 }
 
@@ -129,13 +220,128 @@ pub fn build_ir(
     @ir.X86_64
   }
 
-  // Build initial IR
+  let merged_sections : Array[@ir.MergedSection] = []
+  let sec_index_maps : Array[Array[Int]] = []
+  let sec_base_maps : Array[Array[UInt64]] = []
+
+  // Stage 1: merge allocatable payload sections by section name.
+  for obj in input_objects {
+    let sec_map : Array[Int] = []
+    let sec_base : Array[UInt64] = []
+    for _ in obj.sections {
+      sec_map.push(-1)
+      sec_base.push(0UL)
+    }
+
+    for sec_idx = 0; sec_idx < obj.sections.length(); sec_idx = sec_idx + 1 {
+      let sec = obj.sections[sec_idx]
+      if !should_merge_section(sec) {
+        continue
+      }
+
+      let mut out_idx = find_merged_section_index(merged_sections, sec.name)
+      if out_idx < 0 {
+        out_idx = merged_sections.length()
+        merged_sections.push({
+          output_name: sec.name,
+          output_index: out_idx,
+          align: if sec.align == 0UL { 1UL } else { sec.align },
+          bytes: b"",
+        })
+      }
+
+      let merged = merged_sections[out_idx]
+      let base_off = align_up_int(merged.bytes.length(), merged.align)
+      let pad = base_off - merged.bytes.length()
+      let merged_bytes = append_with_padding(merged.bytes, pad, sec.data)
+
+      merged_sections[out_idx] = {
+        ..merged,
+        bytes: merged_bytes,
+      }
+
+      sec_map[sec_idx] = out_idx
+      sec_base[sec_idx] = base_off.to_uint64()
+    }
+
+    sec_index_maps.push(sec_map)
+    sec_base_maps.push(sec_base)
+  }
+
+  let merged_symbols : Array[@ir.MergedSymbol] = []
+
+  // Stage 2: map input symbols onto merged output sections/offsets.
+  for obj_idx = 0; obj_idx < input_objects.length(); obj_idx = obj_idx + 1 {
+    let obj = input_objects[obj_idx]
+    let sec_map = sec_index_maps[obj_idx]
+    let sec_base = sec_base_maps[obj_idx]
+    for sym in obj.symbols {
+      if sym.name == "" {
+        continue
+      }
+      let name = normalized_symbol_name(obj.path, sym)
+      let out_sec = if sym.sec_index >= 0 && sym.sec_index < sec_map.length() {
+        sec_map[sym.sec_index]
+      } else {
+        -1
+      }
+      let out_base = if sym.sec_index >= 0 && sym.sec_index < sec_base.length() {
+        sec_base[sym.sec_index]
+      } else {
+        0UL
+      }
+      merged_symbols.push({
+        name,
+        output_sec: out_sec,
+        output_value: out_base + sym.value,
+        binding: sym.binding,
+        ty: sym.ty,
+        vis: sym.vis,
+      })
+    }
+  }
+
+  let pending_relocs : Array[@ir.PendingReloc] = []
+
+  // Stage 3: map relocations to merged section/symbol coordinates.
+  for obj_idx = 0; obj_idx < input_objects.length(); obj_idx = obj_idx + 1 {
+    let obj = input_objects[obj_idx]
+    let sec_map = sec_index_maps[obj_idx]
+    let sec_base = sec_base_maps[obj_idx]
+    for rel in obj.relocs {
+      if rel.sec_index < 0 || rel.sec_index >= sec_map.length() {
+        continue
+      }
+      let out_sec = sec_map[rel.sec_index]
+      if out_sec < 0 {
+        continue
+      }
+
+      let patch_off = sec_base[rel.sec_index] + rel.offset
+      let target_sym = if rel.sym_index >= 0 && rel.sym_index < obj.symbols.length() {
+        let target = obj.symbols[rel.sym_index]
+        let name = normalized_symbol_name(obj.path, target)
+        find_merged_symbol_index(merged_symbols, name)
+      } else {
+        -1
+      }
+
+      pending_relocs.push({
+        out_sec,
+        patch_off,
+        rel_type: rel.rel_type,
+        target_sym,
+        addend: rel.addend,
+      })
+    }
+  }
+
   {
     arch,
     bitness: @ir.ELF64,
     input_objects,
-    merged_sections: [],
-    merged_symbols: [],
-    pending_relocs: [],
+    merged_sections,
+    merged_symbols,
+    pending_relocs,
   }
 }

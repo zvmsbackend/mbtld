@@ -1,6 +1,30 @@
 ///| Write PIE/Shared library output
 
 ///|
+fn pie_align_up_int(value : Int, align : UInt64) -> Int {
+  let a = align.to_int()
+  if a <= 1 {
+    return value
+  }
+  ((value + a - 1) / a) * a
+}
+
+///|
+fn pie_serialize_merged_sections(sections : Array[@ir.MergedSection]) -> Bytes {
+  let out : Array[Byte] = []
+  for sec in sections {
+    let aligned = pie_align_up_int(out.length(), sec.align)
+    for _ in out.length()..<aligned {
+      out.push(0)
+    }
+    for b in sec.bytes {
+      out.push(b)
+    }
+  }
+  Bytes::from_array(out)
+}
+
+///|
 /// Write PIE or shared library output
 pub fn write_pie_or_shared(
   ir : @ir.LinkIr,
@@ -14,7 +38,17 @@ pub fn write_pie_or_shared(
   if ir.input_objects.length() == 0 {
     raise LayoutFailure("no input object to emit")
   }
-  raise LayoutFailure(
-    "not implemented for \{opts.output_kind.to_string()} with \{ir.merged_sections.length()} merged sections",
-  )
+
+  let payload = if ir.merged_sections.length() == 0 {
+    ir.input_objects[0].raw
+  } else {
+    pie_serialize_merged_sections(ir.merged_sections)
+  }
+
+  {
+    bytes: payload,
+    map_text: Some(
+      "provisional \{opts.output_kind.to_string()} payload from \{ir.merged_sections.length()} merged sections",
+    ),
+  }
 }

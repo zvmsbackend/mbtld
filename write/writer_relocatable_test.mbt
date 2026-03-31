@@ -65,3 +65,31 @@ test "write_relocatable rejects empty input" {
   }
   inspect(msg, content="no input object to emit")
 }
+
+///|
+test "write_relocatable emits merged section payload" {
+  let raw = b"\x7fELF"
+  let ir = {
+    ..mk_ir([mk_input("a.o", raw)]),
+    merged_sections: [
+      {
+        output_name: ".text",
+        output_index: 0,
+        align: 1UL,
+        bytes: b"\x01\x02",
+      },
+      {
+        output_name: ".data",
+        output_index: 1,
+        align: 1UL,
+        bytes: b"\x03",
+      },
+    ],
+  }
+
+  let artifact = write_relocatable(ir, test_opts()) catch {
+    _ => abort("unexpected writer error")
+  }
+
+  inspect(artifact.bytes, content="b\"\\x01\\x02\\x03\"")
+}

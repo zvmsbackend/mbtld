@@ -7,9 +7,36 @@ pub fn resolve_symbols(
   opts : @ir.LinkOptions,
 ) -> @ir.LinkIr raise @ir.ResolveError {
   let symbol_count = ir.merged_symbols.length()
+
+  // Global symbols must not have multiple concrete definitions.
+  for i = 0; i < symbol_count; i = i + 1 {
+    let left = ir.merged_symbols[i]
+    if left.binding != @ir.Global || left.output_sec < 0 {
+      continue
+    }
+    for j = i + 1; j < symbol_count; j = j + 1 {
+      let right = ir.merged_symbols[j]
+      if right.binding == @ir.Global && right.output_sec >= 0 &&
+        right.name == left.name {
+        raise MultipleDefinition(left.name)
+      }
+    }
+  }
+
   for reloc in ir.pending_relocs {
     if reloc.target_sym < 0 || reloc.target_sym >= symbol_count {
       raise UndefinedSymbol("relocation target index \{reloc.target_sym}")
+    }
+
+    if reloc.out_sec < 0 || reloc.out_sec >= ir.merged_sections.length() {
+      raise SectionConflict("invalid relocation section index \{reloc.out_sec}")
+    }
+
+    if opts.output_kind == @ir.ExecutablePie {
+      let target = ir.merged_symbols[reloc.target_sym]
+      if target.output_sec < 0 {
+        raise UndefinedSymbol(target.name)
+      }
     }
   }
 
@@ -39,6 +66,9 @@ pub fn merge_sections(
 
   let seen : Array[Int] = []
   for sec in ir.merged_sections {
+    if sec.output_name == "" {
+      raise SectionConflict("output section name cannot be empty")
+    }
     if seen.contains(sec.output_index) {
       raise SectionConflict(
         "duplicate output section index \{sec.output_index}",

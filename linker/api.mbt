@@ -81,6 +81,23 @@ pub fn link(opts : @ir.LinkOptions) -> @ir.LinkArtifact raise @ir.LinkError {
         InvalidOutputKind(msg) => raise Write(InvalidOutputKind(msg))
         SerializeFailure(msg) => raise Write(SerializeFailure(msg))
       }
-    _ => raise Write(InvalidOutputKind("unsupported output kind"))
+    EfiApplication =>
+      @write.write_pie_or_shared(ir, opts) catch {
+        LayoutFailure(msg) => raise Write(LayoutFailure(msg))
+        InvalidOutputKind(msg) => raise Write(InvalidOutputKind(msg))
+        SerializeFailure(msg) => raise Write(SerializeFailure(msg))
+      }
+    EfiBootDriver =>
+      @write.write_pie_or_shared(ir, opts) catch {
+        LayoutFailure(msg) => raise Write(LayoutFailure(msg))
+        InvalidOutputKind(msg) => raise Write(InvalidOutputKind(msg))
+        SerializeFailure(msg) => raise Write(SerializeFailure(msg))
+      }
+    EfiRuntimeDriver =>
+      @write.write_pie_or_shared(ir, opts) catch {
+        LayoutFailure(msg) => raise Write(LayoutFailure(msg))
+        InvalidOutputKind(msg) => raise Write(InvalidOutputKind(msg))
+        SerializeFailure(msg) => raise Write(SerializeFailure(msg))
+      }
   }
 }

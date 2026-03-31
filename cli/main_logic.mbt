@@ -5,9 +5,12 @@
 pub fn run_cli(args : Array[String]) -> Int {
   try {
     let opts = parse_args(args)
-    let artifact = @linker.link(opts)
-    write_output(opts.output, artifact.bytes)
+    let result = @linker.link_with_diagnostics(opts)
+    write_output(opts.output, result.artifact.bytes)
     if opts.verbose {
+      for diag in result.diagnostics {
+        println(format_diag(diag))
+      }
       println("Output written to: \{opts.output}")
     }
     0
@@ -46,6 +49,12 @@ pub fn run_cli(args : Array[String]) -> Int {
     }
     _ => abort("unreachable")
   }
+}
+
+///|
+fn format_diag(diag : @linker.Diagnostic) -> String {
+  let level = diag.level.to_string()
+  "[\{level}] \{diag.code}: \{diag.message}"
 }
 
 ///|

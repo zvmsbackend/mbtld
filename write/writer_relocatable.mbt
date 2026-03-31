@@ -35,6 +35,9 @@ pub fn write_relocatable(
   }
 
   if ir.merged_sections.length() == 0 {
+    if ir.input_objects.length() > 1 {
+      raise LayoutFailure("no merged output sections for multi-input relocatable build")
+    }
     // Keep backward compatibility for minimal single-input flow.
     return {
       bytes: ir.input_objects[0].raw,

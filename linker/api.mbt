@@ -2,6 +2,12 @@
 /// Linker public API
 
 ///|
+pub struct LinkExecution {
+  artifact : @ir.LinkArtifact
+  diagnostics : Array[Diagnostic]
+} derive(Show)
+
+///|
 fn load_inputs_from_paths(
   paths : Array[String],
 ) -> Array[@ir.InputObject] raise @ir.LinkError {
@@ -43,26 +49,12 @@ fn load_inputs_from_paths(
 
 ///|
 /// Main entry point for linking
-pub fn link(opts : @ir.LinkOptions) -> @ir.LinkArtifact raise @ir.LinkError {
+pub fn link_with_diagnostics(opts : @ir.LinkOptions) -> LinkExecution raise @ir.LinkError {
   let inputs = load_inputs_from_paths(opts.input_files)
-  let ir = build_ir(inputs, opts)
-  let ir = @resolve.resolve_symbols(ir, opts) catch {
-    UndefinedSymbol(msg) => raise Resolve(UndefinedSymbol(msg))
-    MultipleDefinition(msg) => raise Resolve(MultipleDefinition(msg))
-    SectionConflict(msg) => raise Resolve(SectionConflict(msg))
-  }
-  let ir = @resolve.merge_sections(ir, opts) catch {
-    UndefinedSymbol(msg) => raise Resolve(UndefinedSymbol(msg))
-    MultipleDefinition(msg) => raise Resolve(MultipleDefinition(msg))
-    SectionConflict(msg) => raise Resolve(SectionConflict(msg))
-  }
-  let ir = @reloc.apply_relocations(ir, opts) catch {
-    UnsupportedRelocType(t) => raise Reloc(UnsupportedRelocType(t))
-    RelocOverflow(msg) => raise Reloc(RelocOverflow(msg))
-    BadRelocTarget(msg) => raise Reloc(BadRelocTarget(msg))
-  }
+  let pipeline = run_pipeline(inputs, opts)
+  let ir = pipeline.ir
 
-  match opts.output_kind {
+  let artifact = match opts.output_kind {
     Relocatable =>
       @write.write_relocatable(ir, opts) catch {
         LayoutFailure(msg) => raise Write(LayoutFailure(msg))
@@ -100,4 +92,15 @@ pub fn link(opts : @ir.LinkOptions) -> @ir.LinkArtifact raise @ir.LinkError {
         SerializeFailure(msg) => raise Write(SerializeFailure(msg))
       }
   }
+
+  {
+    artifact,
+    diagnostics: pipeline.diagnostics,
+  }
+}
+
+///|
+/// Main entry point for linking
+pub fn link(opts : @ir.LinkOptions) -> @ir.LinkArtifact raise @ir.LinkError {
+  (link_with_diagnostics(opts)).artifact
 }

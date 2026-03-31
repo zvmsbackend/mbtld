@@ -40,6 +40,11 @@ pub fn write_pie_or_shared(
   }
 
   let payload = if ir.merged_sections.length() == 0 {
+    if ir.input_objects.length() > 1 {
+      raise LayoutFailure(
+        "no merged output sections for multi-input \{opts.output_kind.to_string()} build",
+      )
+    }
     ir.input_objects[0].raw
   } else {
     pie_serialize_merged_sections(ir.merged_sections)

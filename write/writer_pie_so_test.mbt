@@ -81,3 +81,24 @@ test "write_pie_or_shared emits merged payload" {
 
   inspect(artifact.bytes, content="b\"\\xaa\\xbb\\xcc\"")
 }
+
+///|
+test "write_pie_or_shared fails on multi-input without merged sections" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    input_objects: [
+      pie_mk_input("a.o", b"A"),
+      pie_mk_input("b.o", b"B"),
+    ],
+  }
+
+  let mut msg = ""
+  try {
+    ignore(write_pie_or_shared(ir, pie_test_opts(SharedLibrary)))
+    abort("expected writer error")
+  } catch {
+    LayoutFailure(m) => msg = m
+    _ => abort("unexpected writer error type")
+  }
+  inspect(msg, content="no merged output sections for multi-input SharedLibrary build")
+}

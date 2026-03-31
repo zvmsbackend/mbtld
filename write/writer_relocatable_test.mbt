@@ -93,3 +93,21 @@ test "write_relocatable emits merged section payload" {
 
   inspect(artifact.bytes, content="b\"\\x01\\x02\\x03\"")
 }
+
+///|
+test "write_relocatable fails on multi-input without merged sections" {
+  let ir = mk_ir([
+    mk_input("a.o", b"A"),
+    mk_input("b.o", b"B"),
+  ])
+
+  let mut msg = ""
+  try {
+    ignore(write_relocatable(ir, test_opts()))
+    abort("expected writer error")
+  } catch {
+    LayoutFailure(m) => msg = m
+    _ => abort("unexpected writer error type")
+  }
+  inspect(msg, content="no merged output sections for multi-input relocatable build")
+}

@@ -6,6 +6,15 @@ pub fn apply_relocations(
   ir : @ir.LinkIr,
   opts : @ir.LinkOptions,
 ) -> @ir.LinkIr raise @ir.RelocError {
+  if opts.output_kind == @ir.Relocatable {
+    for pending in ir.pending_relocs {
+      if !is_reloc_supported(ir.arch, pending.rel_type) {
+        raise UnsupportedRelocType(pending.rel_type)
+      }
+    }
+    return ir
+  }
+
   let sections = ir.merged_sections
 
   for pending in ir.pending_relocs {
@@ -46,7 +55,7 @@ pub fn apply_relocations(
           pending.addend,
           pending.patch_off,
         )
-      _ => sec.bytes
+      _ => raise UnsupportedRelocType(pending.rel_type)
     }
 
     sections[pending.out_sec] = {

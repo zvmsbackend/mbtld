@@ -588,6 +588,211 @@ test "write_pie_or_shared emits got.plt and DT_PLTGOT tag" {
 }
 
 ///|
+test "write_pie_or_shared emits plt section for jump slot relocations" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 8UL, bytes: b"\x90\xC3" },
+      { output_name: ".data", output_index: 1, align: 8UL, bytes: b"\x00\x00" },
+    ],
+    merged_symbols: [
+      {
+        name: "puts",
+        output_sec: -1,
+        output_value: 0UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+    pending_relocs: [
+      {
+        out_sec: 1,
+        patch_off: 0UL,
+        rel_type: @model.R_X86_64_JUMP_SLOT,
+        target_sym: 0,
+        addend: 0L,
+        has_addend: true,
+      },
+    ],
+  }
+
+  let artifact = write_pie_or_shared(
+    ir,
+    pie_test_opts_with_libs(SharedLibrary, ["libc.so.6"]),
+  )
+
+  let e_shoff = pie_read_u64_le(artifact.bytes, 40).to_int()
+  let e_shnum = pie_read_u16_le(artifact.bytes, 60).to_int()
+  let sh_entsize = pie_read_u16_le(artifact.bytes, 58).to_int()
+
+  let mut found_plt = false
+  let mut plt_off = 0UL
+  let mut plt_addr = 0UL
+  let mut got_plt_off = 0UL
+  let mut got_plt_addr = 0UL
+  for i in 0..<e_shnum {
+    let sh_off = e_shoff + i * sh_entsize
+    let sh_type = pie_read_u32_le(artifact.bytes, sh_off + 4)
+    let sh_off_val = pie_read_u64_le(artifact.bytes, sh_off + 24)
+    let sh_addr = pie_read_u64_le(artifact.bytes, sh_off + 16)
+    let sh_flags = pie_read_u64_le(artifact.bytes, sh_off + 8)
+    let sh_size = pie_read_u64_le(artifact.bytes, sh_off + 32)
+    let sh_entsize_val = pie_read_u64_le(artifact.bytes, sh_off + 56)
+    if sh_type == @model.SHT_PROGBITS &&
+      sh_size == 32UL &&
+      sh_entsize_val == 16UL &&
+      (sh_flags & @model.SHF_EXECINSTR) != 0UL {
+      found_plt = true
+      plt_off = sh_off_val
+      plt_addr = sh_addr
+    }
+    if sh_type == @model.SHT_PROGBITS &&
+      sh_size == 32UL &&
+      sh_entsize_val == 0UL {
+      got_plt_off = sh_off_val
+      got_plt_addr = sh_addr
+    }
+  }
+
+  inspect(found_plt, content="true")
+  inspect(artifact.bytes[plt_off.to_int()].to_uint(), content="255")
+  inspect(artifact.bytes[plt_off.to_int() + 1].to_uint(), content="53")
+  // got.plt[3] should initially point to PLT1+6.
+  inspect(
+    pie_read_u64_le(artifact.bytes, got_plt_off.to_int() + 24),
+    content="\{plt_addr + 22UL}",
+  )
+  inspect(got_plt_addr > 0UL, content="true")
+}
+
+///|
+test "write_pie_or_shared keeps plt got and rela indices aligned" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 8UL, bytes: b"\x90\xC3" },
+      {
+        output_name: ".data",
+        output_index: 1,
+        align: 8UL,
+        bytes: b"\x00\x00\x00\x00",
+      },
+    ],
+    merged_symbols: [
+      {
+        name: "puts",
+        output_sec: -1,
+        output_value: 0UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+      {
+        name: "printf",
+        output_sec: -1,
+        output_value: 0UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+    pending_relocs: [
+      {
+        out_sec: 1,
+        patch_off: 0UL,
+        rel_type: @model.R_X86_64_JUMP_SLOT,
+        target_sym: 0,
+        addend: 0L,
+        has_addend: true,
+      },
+      {
+        out_sec: 1,
+        patch_off: 8UL,
+        rel_type: @model.R_X86_64_JUMP_SLOT,
+        target_sym: 1,
+        addend: 0L,
+        has_addend: true,
+      },
+    ],
+  }
+
+  let artifact = write_pie_or_shared(
+    ir,
+    pie_test_opts_with_libs(SharedLibrary, ["libc.so.6"]),
+  )
+
+  let e_shoff = pie_read_u64_le(artifact.bytes, 40).to_int()
+  let e_shnum = pie_read_u16_le(artifact.bytes, 60).to_int()
+  let sh_entsize = pie_read_u16_le(artifact.bytes, 58).to_int()
+
+  let mut plt_addr = 0UL
+  let mut plt_size = 0UL
+  let mut got_plt_addr = 0UL
+  let mut got_plt_off = 0UL
+  let mut got_plt_size = 0UL
+  let mut rela_plt_off = 0UL
+  let mut rela_plt_size = 0UL
+
+  for i in 0..<e_shnum {
+    let sh_off = e_shoff + i * sh_entsize
+    let sh_type = pie_read_u32_le(artifact.bytes, sh_off + 4)
+    let sh_addr = pie_read_u64_le(artifact.bytes, sh_off + 16)
+    let sh_off_val = pie_read_u64_le(artifact.bytes, sh_off + 24)
+    let sh_size = pie_read_u64_le(artifact.bytes, sh_off + 32)
+    let sh_entsize_val = pie_read_u64_le(artifact.bytes, sh_off + 56)
+    let sh_info = pie_read_u32_le(artifact.bytes, sh_off + 44)
+
+    if sh_type == @model.SHT_PROGBITS &&
+      sh_size == 48UL &&
+      sh_entsize_val == 16UL {
+      plt_addr = sh_addr
+      plt_size = sh_size
+    }
+    if sh_type == @model.SHT_PROGBITS &&
+      sh_size == 40UL &&
+      sh_entsize_val == 0UL {
+      got_plt_addr = sh_addr
+      got_plt_off = sh_off_val
+      got_plt_size = sh_size
+    }
+    if sh_type == @model.SHT_RELA && sh_size == 48UL {
+      rela_plt_off = sh_off_val
+      rela_plt_size = sh_size
+      inspect(sh_info > 0U, content="true")
+    }
+  }
+
+  inspect(plt_size, content="48")
+  inspect(got_plt_size, content="40")
+  inspect(rela_plt_size, content="48")
+
+  // got.plt slots should point at PLTn+6.
+  inspect(
+    pie_read_u64_le(artifact.bytes, got_plt_off.to_int() + 24),
+    content="\{plt_addr + 22UL}",
+  )
+  inspect(
+    pie_read_u64_le(artifact.bytes, got_plt_off.to_int() + 32),
+    content="\{plt_addr + 38UL}",
+  )
+
+  // Rela entries should target got.plt slot addresses with matching sym indexes.
+  let rela0 = rela_plt_off.to_int()
+  let rela1 = rela0 + 24
+  inspect(
+    pie_read_u64_le(artifact.bytes, rela0),
+    content="\{got_plt_addr + 24UL}",
+  )
+  inspect(pie_read_u64_le(artifact.bytes, rela0 + 8), content="4294967303")
+  inspect(
+    pie_read_u64_le(artifact.bytes, rela1),
+    content="\{got_plt_addr + 32UL}",
+  )
+  inspect(pie_read_u64_le(artifact.bytes, rela1 + 8), content="8589934599")
+}
+
+///|
 test "write_pie_or_shared emits dynsym exported symbols" {
   let ir = {
     ..pie_mk_ir(b"\x7fELF"),

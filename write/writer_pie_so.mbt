@@ -39,7 +39,8 @@ fn pie_infer_sh_type(name : String) -> UInt {
 ///|
 fn pie_infer_sh_flags(name : String) -> UInt64 {
   let flags = match name {
-    ".text" | ".init" | ".fini" => @model.SHF_ALLOC | @model.SHF_EXECINSTR
+    ".text" | ".init" | ".fini" | ".plt" =>
+      @model.SHF_ALLOC | @model.SHF_EXECINSTR
     ".interp" => @model.SHF_ALLOC
     ".hash" => @model.SHF_ALLOC
     ".dynsym" => @model.SHF_ALLOC
@@ -121,11 +122,78 @@ fn pie_write_u64_le(out : Array[Byte], offset : Int, v : UInt64) -> Unit {
 }
 
 ///|
+fn pie_write_i32_le(out : Array[Byte], offset : Int, v : Int) -> Unit {
+  let vv = v.reinterpret_as_uint() & 0xffffffffU
+  pie_write_u32_le(out, offset, vv)
+}
+
+///|
+fn pie_write_plt_x86_64(
+  file : Array[Byte],
+  plt_off : UInt64,
+  plt_addr : UInt64,
+  got_plt_addr : UInt64,
+  plt_slot_count : Int,
+) -> Unit {
+  if plt_off == 0UL || plt_slot_count <= 0 {
+    return
+  }
+
+  let plt0_off = plt_off.to_int()
+  // PLT0: pushq GOT+8(%rip); jmpq *GOT+16(%rip); nopl 0x0(%rax)
+  file[plt0_off] = 0xff
+  file[plt0_off + 1] = 0x35
+  pie_write_i32_le(
+    file,
+    plt0_off + 2,
+    (got_plt_addr + 8UL).to_int() - (plt_addr + 6UL).to_int(),
+  )
+  file[plt0_off + 6] = 0xff
+  file[plt0_off + 7] = 0x25
+  pie_write_i32_le(
+    file,
+    plt0_off + 8,
+    (got_plt_addr + 16UL).to_int() - (plt_addr + 12UL).to_int(),
+  )
+  file[plt0_off + 12] = 0x0f
+  file[plt0_off + 13] = 0x1f
+  file[plt0_off + 14] = 0x40
+  file[plt0_off + 15] = 0x00
+
+  // PLTn: jmpq *GOT[n+3](%rip); pushq reloc_index; jmpq PLT0
+  for i in 0..<plt_slot_count {
+    let ent_off = plt0_off + (i + 1) * 16
+    let ent_addr = plt_addr + ((i + 1) * 16).to_uint64()
+    let got_slot_addr = got_plt_addr + ((3 + i) * 8).to_uint64()
+
+    file[ent_off] = 0xff
+    file[ent_off + 1] = 0x25
+    pie_write_i32_le(
+      file,
+      ent_off + 2,
+      got_slot_addr.to_int() - (ent_addr + 6UL).to_int(),
+    )
+
+    file[ent_off + 6] = 0x68
+    pie_write_u32_le(file, ent_off + 7, i.reinterpret_as_uint())
+
+    file[ent_off + 11] = 0xe9
+    pie_write_i32_le(
+      file,
+      ent_off + 12,
+      plt_addr.to_int() - (ent_addr + 16UL).to_int(),
+    )
+  }
+}
+
+///|
 fn pie_infer_sh_entsize(name : String, sec_ty : UInt) -> UInt64 {
   if name == ".dynamic" || sec_ty == @model.SHT_DYNAMIC {
     16UL
   } else if name == ".hash" || sec_ty == @model.SHT_HASH {
     4UL
+  } else if name == ".plt" {
+    16UL
   } else if name == ".rela.dyn" ||
     name == ".rela.plt" ||
     sec_ty == @model.SHT_RELA {
@@ -604,6 +672,17 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
       align: 1UL,
       bytes: dyn_build.dynstr,
     })
+    if has_rela_plt {
+      // Minimal x86_64 PLT layout: PLT0 + one 16-byte slot per JUMP_SLOT relocation.
+      let plt_entry_count = 1 + plt_rela_recs.length()
+      let plt = [b'\x00'].repeat(plt_entry_count * 16) |> Bytes::from_array
+      sections.push({
+        output_name: ".plt",
+        output_index: sections.length(),
+        align: 16UL,
+        bytes: plt,
+      })
+    }
     if has_pltgot {
       // x86_64 .got.plt reserves first 3 entries for the lazy resolver ABI.
       let slot_count = 3 + plt_rela_recs.length()
@@ -693,6 +772,8 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   let mut dynamic_off = 0UL
   let mut dynamic_addr = 0UL
   let mut dynamic_size = 0UL
+  let mut plt_off = 0UL
+  let mut plt_addr = 0UL
   let mut got_plt_off = 0UL
   let mut got_plt_addr = 0UL
   let mut rela_dyn_off = 0UL
@@ -762,6 +843,10 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
         dynamic_addr = sec_addr
         dynamic_size = sec.bytes.length().to_uint64()
         dynamic_shidx = sh_index
+      }
+      ".plt" => {
+        plt_off = sec_off
+        plt_addr = sec_addr
       }
       ".got.plt" => {
         got_plt_off = sec_off
@@ -891,6 +976,21 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   if has_dynamic && has_pltgot && got_plt_off > 0UL {
     // got.plt[0] points at _DYNAMIC on x86_64 System V ABI.
     pie_write_u64_le(file, got_plt_off.to_int(), dynamic_addr)
+    for i in 0..<plt_rela_recs.length() {
+      let slot_off = got_plt_off.to_int() + (3 + i) * 8
+      let slot_plt_addr = plt_addr + ((i + 1) * 16 + 6).to_uint64()
+      pie_write_u64_le(file, slot_off, slot_plt_addr)
+    }
+  }
+
+  if has_dynamic && has_rela_plt && ir.arch is X86_64 {
+    pie_write_plt_x86_64(
+      file,
+      plt_off,
+      plt_addr,
+      got_plt_addr,
+      plt_rela_recs.length(),
+    )
   }
 
   if has_dynamic && has_rela_plt {

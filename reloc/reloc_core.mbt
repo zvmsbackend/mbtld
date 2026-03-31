@@ -4,8 +4,13 @@
 /// Apply relocations to IR
 pub fn apply_relocations(
   ir : @ir.LinkIr,
-  opts : @ir.LinkOptions,
+  _opts : @ir.LinkOptions,
 ) -> @ir.LinkIr raise @ir.RelocError {
+  for pending in ir.pending_relocs {
+    if !is_reloc_supported(ir.arch, pending.rel_type) {
+      raise UnsupportedRelocType(pending.rel_type)
+    }
+  }
   ir
 }
 

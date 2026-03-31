@@ -138,6 +138,15 @@ fn pie_write_u64_le(out : Array[Byte], offset : Int, v : UInt64) -> Unit {
 }
 
 ///|
+fn pie_max_u64(a : UInt64, b : UInt64) -> UInt64 {
+  if a > b {
+    a
+  } else {
+    b
+  }
+}
+
+///|
 fn pie_build_elf64_dyn(ir : @ir.LinkIr) -> Bytes {
   let section_names : Array[String] = []
   for sec in ir.merged_sections {
@@ -160,16 +169,27 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr) -> Bytes {
   shdrs.push(pie_shdr_zero())
 
   let file : Array[Byte] = []
-  for _ in 0..<@model.ELF64_EHDR_SIZE {
+  let e_phoff = @model.ELF64_EHDR_SIZE.to_uint64()
+  let ph_count = 1
+  let ph_size_total = @model.ELF64_PHDR_SIZE * ph_count
+  let data_start = @model.ELF64_EHDR_SIZE + ph_size_total
+
+  for _ in 0..<data_start {
     file.push(0)
   }
 
-  let mut cursor = @model.ELF64_EHDR_SIZE
+  let mut cursor = data_start
+  let mut vcursor = data_start
+  let mut load_flags = @model.PF_R
+  let mut load_mem_end = data_start.to_uint64()
   for i = 0; i < ir.merged_sections.length(); i = i + 1 {
     let sec = ir.merged_sections[i]
     let sec_ty = pie_infer_sh_type(sec.output_name)
     let sec_flags = pie_infer_sh_flags(sec.output_name)
     let sec_align = if sec.align == 0UL { 1UL } else { sec.align }
+
+    vcursor = pie_align_up_int(vcursor, sec_align)
+    let sec_addr = vcursor.to_uint64()
 
     let mut sec_off = 0UL
     if sec_ty != @model.SHT_NOBITS {
@@ -184,11 +204,26 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr) -> Bytes {
       cursor += sec.bytes.length()
     }
 
+    vcursor += sec.bytes.length()
+
+    if (sec_flags & @model.SHF_ALLOC) != 0UL {
+      load_mem_end = pie_max_u64(
+        load_mem_end,
+        sec_addr + sec.bytes.length().to_uint64(),
+      )
+      if (sec_flags & @model.SHF_EXECINSTR) != 0UL {
+        load_flags = load_flags | @model.PF_X
+      }
+      if (sec_flags & @model.SHF_WRITE) != 0UL {
+        load_flags = load_flags | @model.PF_W
+      }
+    }
+
     shdrs.push({
       sh_name: sh_name_offsets[i],
       sh_type: sec_ty,
       sh_flags: sec_flags,
-      sh_addr: 0,
+      sh_addr: sec_addr,
       sh_offset: sec_off,
       sh_size: sec.bytes.length().to_uint64(),
       sh_link: 0,
@@ -203,6 +238,8 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr) -> Bytes {
     file.push(b)
   }
   cursor += shstr_bytes.length()
+
+  let load_file_end = cursor.to_uint64()
 
   shdrs.push({
     sh_name: sh_name_offsets[section_names.length() - 1],
@@ -250,15 +287,25 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr) -> Bytes {
   pie_write_u16_le(file, 18, pie_machine_from_arch(ir.arch))
   pie_write_u32_le(file, 20, 1)
   pie_write_u64_le(file, 24, 0UL)
-  pie_write_u64_le(file, 32, 0UL)
+  pie_write_u64_le(file, 32, e_phoff)
   pie_write_u64_le(file, 40, e_shoff)
   pie_write_u32_le(file, 48, 0)
   pie_write_u16_le(file, 52, @model.ELF64_EHDR_SIZE.to_uint16())
-  pie_write_u16_le(file, 54, 0)
-  pie_write_u16_le(file, 56, 0)
+  pie_write_u16_le(file, 54, @model.ELF64_PHDR_SIZE.to_uint16())
+  pie_write_u16_le(file, 56, ph_count.to_uint16())
   pie_write_u16_le(file, 58, @model.ELF64_SHDR_SIZE.to_uint16())
   pie_write_u16_le(file, 60, shdrs.length().to_uint16())
   pie_write_u16_le(file, 62, (shdrs.length() - 1).to_uint16())
+
+  let ph_off = e_phoff.to_int()
+  pie_write_u32_le(file, ph_off, @model.PT_LOAD)
+  pie_write_u32_le(file, ph_off + 4, load_flags)
+  pie_write_u64_le(file, ph_off + 8, 0UL)
+  pie_write_u64_le(file, ph_off + 16, 0UL)
+  pie_write_u64_le(file, ph_off + 24, 0UL)
+  pie_write_u64_le(file, ph_off + 32, load_file_end)
+  pie_write_u64_le(file, ph_off + 40, pie_max_u64(load_mem_end, load_file_end))
+  pie_write_u64_le(file, ph_off + 48, 0x1000UL)
 
   Bytes::from_array(file)
 }

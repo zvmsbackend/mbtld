@@ -107,10 +107,118 @@ fn rr_write_u64_le(out : Array[Byte], offset : Int, v : UInt64) -> Unit {
 }
 
 ///|
+priv struct RrSymtabBuild {
+  symtab : Bytes
+  strtab : Bytes
+  local_count : Int
+}
+
+///|
+fn rr_symbol_binding_to_elf(binding : @ir.SymbolBinding) -> Byte {
+  match binding {
+    Local => @model.STB_LOCAL
+    Global => @model.STB_GLOBAL
+    Weak => @model.STB_WEAK
+  }
+}
+
+///|
+fn rr_symbol_type_to_elf(ty : @ir.SymbolType) -> Byte {
+  match ty {
+    NoType => @model.STT_NOTYPE
+    Object => @model.STT_OBJECT
+    Func => @model.STT_FUNC
+    Section => @model.STT_SECTION
+    File => @model.STT_FILE
+    Tls => @model.STT_TLS
+  }
+}
+
+///|
+fn rr_visibility_to_elf(vis : @ir.Visibility) -> Byte {
+  match vis {
+    Default => @model.STV_DEFAULT
+    Internal => @model.STV_INTERNAL
+    Hidden => @model.STV_HIDDEN
+    Protected => @model.STV_PROTECTED
+  }
+}
+
+///|
+fn rr_append_cstr_with_offset(arr : Array[Byte], s : String) -> UInt {
+  let off = arr.length().reinterpret_as_uint()
+  for ch in s {
+    arr.push(Char::to_int(ch).to_byte())
+  }
+  arr.push(0)
+  off
+}
+
+///|
+fn rr_build_symtab_and_strtab(ir : @ir.LinkIr) -> RrSymtabBuild {
+  let ordered : Array[@ir.MergedSymbol] = []
+  let mut local_count = 0
+  for sym in ir.merged_symbols {
+    if sym.binding is Local {
+      ordered.push(sym)
+      local_count += 1
+    }
+  }
+  for sym in ir.merged_symbols {
+    if !(sym.binding is Local) {
+      ordered.push(sym)
+    }
+  }
+
+  let strtab : Array[Byte] = [0]
+  let st_name_offsets : Array[UInt] = []
+  for sym in ordered {
+    st_name_offsets.push(rr_append_cstr_with_offset(strtab, sym.name))
+  }
+
+  let symtab : Array[Byte] = []
+  for _ in 0..<@model.ELF64_SYM_SIZE {
+    symtab.push(0)
+  }
+
+  for i in 0..<ordered.length() {
+    let sym = ordered[i]
+    let st_name = st_name_offsets[i]
+    let st_info = ((rr_symbol_binding_to_elf(sym.binding).to_int() << 4) |
+    rr_symbol_type_to_elf(sym.ty).to_int()).to_byte()
+    let st_other = rr_visibility_to_elf(sym.vis)
+    let st_shndx = if sym.output_sec >= 0 {
+      (sym.output_sec + 1).to_uint16()
+    } else {
+      @model.SHN_UNDEF
+    }
+    let st_value = if sym.output_sec >= 0 { sym.output_value } else { 0UL }
+    let st_size = 0UL
+
+    rr_push_u32_le(symtab, st_name)
+    symtab.push(st_info)
+    symtab.push(st_other)
+    symtab.push((st_shndx.to_uint() & 0xffU).to_byte())
+    symtab.push(((st_shndx.to_uint() >> 8) & 0xffU).to_byte())
+    rr_push_u64_le(symtab, st_value)
+    rr_push_u64_le(symtab, st_size)
+  }
+
+  {
+    symtab: Bytes::from_array(symtab),
+    strtab: Bytes::from_array(strtab),
+    local_count,
+  }
+}
+
+///|
 fn rr_build_elf64_relocatable(ir : @ir.LinkIr) -> Bytes {
+  let sym_build = rr_build_symtab_and_strtab(ir)
   let section_names : Array[String] = ir.merged_sections.map(sec => {
     sec.output_name
   })
+  section_names.push(".symtab")
+  section_names.push(".strtab")
   section_names.push(".shstrtab")
 
   let sh_name_offsets : Array[UInt] = []
@@ -162,6 +270,53 @@ fn rr_build_elf64_relocatable(ir : @ir.LinkIr) -> Bytes {
     })
   }
 
+  cursor = rr_align_up_int(cursor, 8UL)
+  let symtab_off = cursor.to_uint64()
+  for _ in file.length()..<cursor {
+    file.push(0)
+  }
+  for b in sym_build.symtab {
+    file.push(b)
+  }
+  cursor += sym_build.symtab.length()
+
+  let strtab_idx = shdrs.length() + 1
+  cursor = rr_align_up_int(cursor, 1UL)
+  let strtab_off = cursor.to_uint64()
+  for _ in file.length()..<cursor {
+    file.push(0)
+  }
+  for b in sym_build.strtab {
+    file.push(b)
+  }
+  cursor += sym_build.strtab.length()
+
+  shdrs.push({
+    sh_name: sh_name_offsets[ir.merged_sections.length()],
+    sh_type: @model.SHT_SYMTAB,
+    sh_flags: 0,
+    sh_addr: 0,
+    sh_offset: symtab_off,
+    sh_size: sym_build.symtab.length().to_uint64(),
+    sh_link: strtab_idx.reinterpret_as_uint(),
+    sh_info: (sym_build.local_count + 1).reinterpret_as_uint(),
+    sh_addralign: 8UL,
+    sh_entsize: @model.ELF64_SYM_SIZE.to_uint64(),
+  })
+
+  shdrs.push({
+    sh_name: sh_name_offsets[ir.merged_sections.length() + 1],
+    sh_type: @model.SHT_STRTAB,
+    sh_flags: 0,
+    sh_addr: 0,
+    sh_offset: strtab_off,
+    sh_size: sym_build.strtab.length().to_uint64(),
+    sh_link: 0,
+    sh_info: 0,
+    sh_addralign: 1,
+    sh_entsize: 0,
+  })
+
   cursor = rr_align_up_int(cursor, 1UL)
   let shstr_off = cursor.to_uint64()
   for _ in file.length()..<cursor {
@@ -173,7 +328,7 @@ fn rr_build_elf64_relocatable(ir : @ir.LinkIr) -> Bytes {
   cursor += shstr_bytes.length()
 
   shdrs.push({
-    sh_name: sh_name_offsets[section_names.length() - 1],
+    sh_name: sh_name_offsets[ir.merged_sections.length() + 2],
     sh_type: @model.SHT_STRTAB,
     sh_flags: 0,
     sh_addr: 0,

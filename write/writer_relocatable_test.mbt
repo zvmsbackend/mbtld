@@ -43,6 +43,31 @@ fn mk_input(path : String, raw : Bytes) -> @ir.InputObject {
 }
 
 ///|
+fn rr_read_u16_le(bytes : Bytes, off : Int) -> UInt16 {
+  (bytes[off].to_uint() | (bytes[off + 1].to_uint() << 8)).to_uint16()
+}
+
+///|
+fn rr_read_u32_le(bytes : Bytes, off : Int) -> UInt {
+  bytes[off].to_uint() |
+  (bytes[off + 1].to_uint() << 8) |
+  (bytes[off + 2].to_uint() << 16) |
+  (bytes[off + 3].to_uint() << 24)
+}
+
+///|
+fn rr_read_u64_le(bytes : Bytes, off : Int) -> UInt64 {
+  bytes[off].to_uint64() |
+  (bytes[off + 1].to_uint64() << 8) |
+  (bytes[off + 2].to_uint64() << 16) |
+  (bytes[off + 3].to_uint64() << 24) |
+  (bytes[off + 4].to_uint64() << 32) |
+  (bytes[off + 5].to_uint64() << 40) |
+  (bytes[off + 6].to_uint64() << 48) |
+  (bytes[off + 7].to_uint64() << 56)
+}
+
+///|
 test "write_relocatable passthrough one object" {
   let raw = b"\x7fELF\x02\x01\x01\x00"
   let ir = mk_ir([mk_input("a.o", raw)])
@@ -80,6 +105,87 @@ test "write_relocatable emits merged section payload" {
   inspect(artifact.bytes[0:4].to_bytes(), content="b\"\\x7fELF\"")
   inspect(artifact.bytes[16], content="b'\\x01'")
   inspect(artifact.bytes[17], content="b'\\x00'")
+}
+
+///|
+test "write_relocatable emits symtab and strtab" {
+  let raw = b"\x7fELF"
+  let ir = {
+    ..mk_ir([mk_input("a.o", raw)]),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 1UL, bytes: b"\x90" },
+    ],
+    merged_symbols: [
+      {
+        name: "L0",
+        output_sec: 0,
+        output_value: 0UL,
+        binding: Local,
+        ty: NoType,
+        vis: Default,
+      },
+      {
+        name: "foo",
+        output_sec: 0,
+        output_value: 0UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+  }
+
+  let artifact = write_relocatable(ir, test_opts())
+  let bytes = artifact.bytes
+
+  let e_shoff = rr_read_u64_le(bytes, 40).to_int()
+  let e_shentsize = rr_read_u16_le(bytes, 58).to_int()
+  let e_shnum = rr_read_u16_le(bytes, 60).to_int()
+
+  let mut symtab_idx = -1
+  let mut strtab_idx = -1
+  let mut symtab_link = 0U
+  let mut symtab_info = 0U
+  let mut symtab_entsize = 0UL
+  let mut symtab_size = 0UL
+  let mut strtab_off = 0UL
+  let mut strtab_size = 0UL
+
+  for i in 0..<e_shnum {
+    let sh_off = e_shoff + i * e_shentsize
+    let sh_type = rr_read_u32_le(bytes, sh_off + 4)
+    if sh_type == 2 {
+      symtab_idx = i
+      symtab_link = rr_read_u32_le(bytes, sh_off + 40)
+      symtab_info = rr_read_u32_le(bytes, sh_off + 44)
+      symtab_size = rr_read_u64_le(bytes, sh_off + 32)
+      symtab_entsize = rr_read_u64_le(bytes, sh_off + 56)
+    }
+    if sh_type == 3 && i > 0 {
+      let sh_off_val = rr_read_u64_le(bytes, sh_off + 24)
+      let sh_size_val = rr_read_u64_le(bytes, sh_off + 32)
+      // Symbol strtab is the smaller STRTAB, shstrtab is usually larger.
+      if strtab_idx < 0 || sh_size_val < strtab_size {
+        strtab_idx = i
+        strtab_off = sh_off_val
+        strtab_size = sh_size_val
+      }
+    }
+  }
+
+  inspect(symtab_idx >= 0, content="true")
+  inspect(strtab_idx >= 0, content="true")
+  inspect(symtab_link, content="\{strtab_idx.reinterpret_as_uint()}")
+  inspect(symtab_info, content="2")
+  inspect(symtab_entsize, content="24")
+  inspect(symtab_size, content="72")
+
+  inspect(strtab_size, content="8")
+  let base = strtab_off.to_int()
+  inspect(bytes[base], content="b'\\x00'")
+  inspect(bytes[base + 1], content="b'\\x4C'")
+  inspect(bytes[base + 4], content="b'\\x66'")
+  inspect(bytes[base + 7], content="b'\\x00'")
 }
 
 ///|

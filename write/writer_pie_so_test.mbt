@@ -18,6 +18,14 @@ fn pie_test_opts(kind : @ir.OutputKind) -> @ir.LinkOptions {
 }
 
 ///|
+fn pie_test_opts_with_libs(
+  kind : @ir.OutputKind,
+  libs : Array[String],
+) -> @ir.LinkOptions {
+  { ..pie_test_opts(kind), dynamic_libs: libs }
+}
+
+///|
 fn pie_mk_input(path : String, raw : Bytes) -> @ir.InputObject {
   {
     path,
@@ -81,6 +89,32 @@ test "write_pie_or_shared emits merged payload" {
   inspect(artifact.bytes[68], content="b'\\x05'")
   inspect(artifact.bytes[120], content="b'\\x01'")
   inspect(artifact.bytes[124], content="b'\\x06'")
+}
+
+///|
+test "write_pie_or_shared emits minimal dynamic metadata" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 1UL, bytes: b"\xaa" },
+      { output_name: ".data", output_index: 1, align: 1UL, bytes: b"\xbb\xcc" },
+    ],
+  }
+
+  let artifact = write_pie_or_shared(
+    ir,
+    pie_test_opts_with_libs(SharedLibrary, ["libc.so.6"]),
+  ) catch {
+    _ => abort("unexpected writer error")
+  }
+
+  // e_phnum=3 (RX, RW, PT_DYNAMIC)
+  inspect(artifact.bytes[56], content="b'\\x03'")
+  // Third PHDR type/flags
+  inspect(artifact.bytes[176], content="b'\\x02'")
+  inspect(artifact.bytes[180], content="b'\\x06'")
+  // .dynstr payload contains "libc.so.6"
+  inspect(artifact.bytes[236], content="b'\\x6C'")
 }
 
 ///|

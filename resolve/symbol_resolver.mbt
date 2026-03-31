@@ -43,7 +43,26 @@ pub fn resolve_symbols(
 
   if opts.output_kind != @ir.Relocatable && opts.entry != "" {
     let found = ir.merged_symbols.search_by(sym => sym.name == opts.entry)
-    if found is None {
+    if found is Some(sym_idx) {
+      let sym = ir.merged_symbols[sym_idx]
+      if sym.output_sec < 0 {
+        raise UndefinedSymbol(opts.entry)
+      }
+      if sym.output_sec >= ir.merged_sections.length() {
+        raise SectionConflict(
+          "entry symbol has invalid section index \{sym.output_sec}",
+        )
+      }
+      let sec_name = ir.merged_sections[sym.output_sec].output_name
+      let is_exec_sec = sec_name == ".text" ||
+        sec_name == ".init" ||
+        sec_name == ".fini" ||
+        sec_name.has_prefix(".text.")
+      let is_func_sym = sym.ty is @ir.Func
+      if !is_func_sym && !is_exec_sec {
+        raise SectionConflict("entry symbol is not executable: \{opts.entry}")
+      }
+    } else {
       raise UndefinedSymbol(opts.entry)
     }
   }

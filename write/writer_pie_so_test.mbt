@@ -218,6 +218,55 @@ test "write_pie_or_shared defaults e_entry to main when _start missing" {
 }
 
 ///|
+test "write_pie_or_shared ignores explicit data symbol as entry" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      { output_name: ".data", output_index: 0, align: 1UL, bytes: b"\x01" },
+    ],
+    merged_symbols: [
+      {
+        name: "main",
+        output_sec: 0,
+        output_value: 0UL,
+        binding: Global,
+        ty: Object,
+        vis: Default,
+      },
+    ],
+  }
+  let opts = { ..pie_test_opts(ExecutablePie), entry: "main" }
+
+  let artifact = write_pie_or_shared(ir, opts)
+
+  inspect(pie_read_u64_le(artifact.bytes, 24), content="0")
+}
+
+///|
+test "write_pie_or_shared fallback skips data main symbol" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      { output_name: ".data", output_index: 0, align: 1UL, bytes: b"\x01" },
+    ],
+    merged_symbols: [
+      {
+        name: "main",
+        output_sec: 0,
+        output_value: 0UL,
+        binding: Global,
+        ty: Object,
+        vis: Default,
+      },
+    ],
+  }
+
+  let artifact = write_pie_or_shared(ir, pie_test_opts(ExecutablePie))
+
+  inspect(pie_read_u64_le(artifact.bytes, 24), content="0")
+}
+
+///|
 test "write_pie_or_shared emits minimal dynamic metadata" {
   let ir = {
     ..pie_mk_ir(b"\x7fELF"),

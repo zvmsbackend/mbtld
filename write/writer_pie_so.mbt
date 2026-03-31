@@ -389,7 +389,13 @@ fn pie_resolve_entry_addr(
     let found = ir.merged_symbols.iter().find_first(sym => sym.name == name)
     if found is Some(sym) {
       if sym.output_sec >= 0 && sym.output_sec < section_addrs.length() {
-        return section_addrs[sym.output_sec] + sym.output_value
+        let sec_name = ir.merged_sections[sym.output_sec].output_name
+        let sec_flags = pie_infer_sh_flags(sec_name)
+        let is_exec_sec = (sec_flags & @model.SHF_EXECINSTR) != 0UL
+        let is_func_sym = sym.ty is @ir.Func
+        if is_func_sym || is_exec_sec {
+          return section_addrs[sym.output_sec] + sym.output_value
+        }
       }
     }
   }

@@ -241,7 +241,10 @@ fn pie_exportable_symbol(sym : @ir.MergedSymbol) -> Bool {
   if sym.name == "" {
     return false
   }
-  !(sym.binding is Local)
+  if sym.binding is Local {
+    return false
+  }
+  !(sym.vis is Hidden || sym.vis is Internal)
 }
 
 ///|

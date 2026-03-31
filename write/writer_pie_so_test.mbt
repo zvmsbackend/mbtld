@@ -856,6 +856,284 @@ test "write_pie_or_shared orders relative relocations first for relacount" {
 }
 
 ///|
+test "write_pie_or_shared keeps dynamic relocation strategy coherent" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      {
+        output_name: ".text",
+        output_index: 0,
+        align: 8UL,
+        bytes: b"\x90\x90\xC3",
+      },
+      {
+        output_name: ".data",
+        output_index: 1,
+        align: 8UL,
+        bytes: b"\x00\x00\x00\x00\x00\x00\x00\x00",
+      },
+    ],
+    merged_symbols: [
+      {
+        name: "ext_func",
+        output_sec: -1,
+        output_value: 0UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+      {
+        name: "a.o:local_func",
+        output_sec: 0,
+        output_value: 1UL,
+        binding: Local,
+        ty: Func,
+        vis: Default,
+      },
+      {
+        name: "hidden_obj",
+        output_sec: 0,
+        output_value: 2UL,
+        binding: Global,
+        ty: Object,
+        vis: Hidden,
+      },
+      {
+        name: "puts",
+        output_sec: -1,
+        output_value: 0UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+    pending_relocs: [
+      {
+        out_sec: 1,
+        patch_off: 0UL,
+        rel_type: @model.R_X86_64_64,
+        target_sym: 0,
+        addend: 1L,
+        has_addend: true,
+      },
+      {
+        out_sec: 1,
+        patch_off: 8UL,
+        rel_type: @model.R_X86_64_64,
+        target_sym: 1,
+        addend: 2L,
+        has_addend: true,
+      },
+      {
+        out_sec: 1,
+        patch_off: 16UL,
+        rel_type: @model.R_X86_64_GLOB_DAT,
+        target_sym: 2,
+        addend: 0L,
+        has_addend: true,
+      },
+      {
+        out_sec: 1,
+        patch_off: 24UL,
+        rel_type: @model.R_X86_64_JUMP_SLOT,
+        target_sym: 3,
+        addend: 0L,
+        has_addend: true,
+      },
+    ],
+  }
+
+  let artifact = write_pie_or_shared(
+    ir,
+    pie_test_opts_with_libs(SharedLibrary, ["libc.so.6"]),
+  )
+
+  let e_shoff = pie_read_u64_le(artifact.bytes, 40).to_int()
+  let e_shnum = pie_read_u16_le(artifact.bytes, 60).to_int()
+  let sh_entsize = pie_read_u16_le(artifact.bytes, 58).to_int()
+
+  let mut text_addr = 0UL
+  let mut dynsym_size = 0UL
+  let mut rela_dyn_off = 0UL
+  let mut rela_dyn_size = 0UL
+  let mut rela_plt_off = 0UL
+  let mut rela_plt_size = 0UL
+  let mut got_plt_addr = 0UL
+
+  for i in 0..<e_shnum {
+    let sh_off = e_shoff + i * sh_entsize
+    let sh_type = pie_read_u32_le(artifact.bytes, sh_off + 4)
+    let sh_flags = pie_read_u64_le(artifact.bytes, sh_off + 8)
+    let sh_addr = pie_read_u64_le(artifact.bytes, sh_off + 16)
+    let sh_off_val = pie_read_u64_le(artifact.bytes, sh_off + 24)
+    let sh_size = pie_read_u64_le(artifact.bytes, sh_off + 32)
+    let sh_entsize_val = pie_read_u64_le(artifact.bytes, sh_off + 56)
+    let sh_info = pie_read_u32_le(artifact.bytes, sh_off + 44)
+
+    if sh_type == @model.SHT_PROGBITS &&
+      (sh_flags & @model.SHF_EXECINSTR) != 0UL &&
+      sh_size == 3UL {
+      text_addr = sh_addr
+    }
+    if sh_type == @model.SHT_DYNSYM {
+      dynsym_size = sh_size
+    }
+    if sh_type == @model.SHT_PROGBITS &&
+      sh_entsize_val == 0UL &&
+      sh_size == 32UL {
+      got_plt_addr = sh_addr
+    }
+    if sh_type == @model.SHT_RELA && sh_size == 72UL {
+      rela_dyn_off = sh_off_val
+      rela_dyn_size = sh_size
+      inspect(sh_info, content="0")
+    }
+    if sh_type == @model.SHT_RELA && sh_size == 24UL {
+      rela_plt_off = sh_off_val
+      rela_plt_size = sh_size
+      inspect(sh_info > 0U, content="true")
+    }
+  }
+
+  // dynsym should export only ext_func and puts (NULL + 2 entries).
+  inspect(dynsym_size, content="72")
+  inspect(rela_dyn_size, content="72")
+  inspect(rela_plt_size, content="24")
+
+  // RELATIVE entries must lead the .rela.dyn prefix.
+  let rd0 = rela_dyn_off.to_int()
+  let rd1 = rd0 + 24
+  let rd2 = rd1 + 24
+  inspect(pie_read_u64_le(artifact.bytes, rd0 + 8), content="8")
+  inspect(pie_read_u64_le(artifact.bytes, rd1 + 8), content="8")
+  inspect(pie_read_u64_le(artifact.bytes, rd2 + 8), content="4294967297")
+  inspect(
+    pie_read_u64_le(artifact.bytes, rd0 + 16),
+    content="\{text_addr + 3UL}",
+  )
+  inspect(
+    pie_read_u64_le(artifact.bytes, rd1 + 16),
+    content="\{text_addr + 2UL}",
+  )
+
+  // JUMP_SLOT relocation should reference dynsym index 2 (puts).
+  let rp0 = rela_plt_off.to_int()
+  inspect(pie_read_u64_le(artifact.bytes, rp0 + 8), content="8589934599")
+  inspect(
+    pie_read_u64_le(artifact.bytes, rp0),
+    content="\{got_plt_addr + 24UL}",
+  )
+
+  // RELACOUNT must match RELATIVE prefix length.
+  let phnum = pie_read_u16_le(artifact.bytes, 56).to_int()
+  let phoff = pie_read_u64_le(artifact.bytes, 32).to_int()
+  let phentsize = pie_read_u16_le(artifact.bytes, 54).to_int()
+  let mut dynamic_off = 0UL
+  for i in 0..<phnum {
+    let p_off = phoff + i * phentsize
+    if pie_read_u32_le(artifact.bytes, p_off) == @model.PT_DYNAMIC {
+      dynamic_off = pie_read_u64_le(artifact.bytes, p_off + 8)
+    }
+  }
+
+  let mut has_relacount = false
+  for i in 0..<24 {
+    let tag = pie_read_u64_le(artifact.bytes, dynamic_off.to_int() + i * 16)
+    let val = pie_read_u64_le(artifact.bytes, dynamic_off.to_int() + i * 16 + 8)
+    if tag == 0x6ffffff9UL {
+      has_relacount = val == 2UL
+    }
+    if tag == 0UL {
+      break
+    }
+  }
+  inspect(has_relacount, content="true")
+}
+
+///|
+test "write_pie_or_shared does not lower preemptible abs64 relocations" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      {
+        output_name: ".text",
+        output_index: 0,
+        align: 8UL,
+        bytes: b"\x90\x90\xC3",
+      },
+      { output_name: ".data", output_index: 1, align: 8UL, bytes: b"\x00\x00" },
+    ],
+    merged_symbols: [
+      {
+        name: "ext_func",
+        output_sec: -1,
+        output_value: 0UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+    pending_relocs: [
+      {
+        out_sec: 1,
+        patch_off: 0UL,
+        rel_type: @model.R_X86_64_64,
+        target_sym: 0,
+        addend: 7L,
+        has_addend: true,
+      },
+    ],
+  }
+
+  let artifact = write_pie_or_shared(
+    ir,
+    pie_test_opts_with_libs(SharedLibrary, ["libc.so.6"]),
+  )
+
+  let e_shoff = pie_read_u64_le(artifact.bytes, 40).to_int()
+  let e_shnum = pie_read_u16_le(artifact.bytes, 60).to_int()
+  let sh_entsize = pie_read_u16_le(artifact.bytes, 58).to_int()
+
+  let mut rela_off = 0UL
+  for i in 0..<e_shnum {
+    let sh_off = e_shoff + i * sh_entsize
+    let sh_type = pie_read_u32_le(artifact.bytes, sh_off + 4)
+    let sh_size = pie_read_u64_le(artifact.bytes, sh_off + 32)
+    if sh_type == @model.SHT_RELA && sh_size == 24UL {
+      rela_off = pie_read_u64_le(artifact.bytes, sh_off + 24)
+    }
+  }
+
+  let r0 = rela_off.to_int()
+  // sym index 1 + rel_type 1 => (1<<32)|1
+  inspect(pie_read_u64_le(artifact.bytes, r0 + 8), content="4294967297")
+  inspect(pie_read_u64_le(artifact.bytes, r0 + 16), content="7")
+
+  let phnum = pie_read_u16_le(artifact.bytes, 56).to_int()
+  let phoff = pie_read_u64_le(artifact.bytes, 32).to_int()
+  let phentsize = pie_read_u16_le(artifact.bytes, 54).to_int()
+  let mut dynamic_off = 0UL
+  for i in 0..<phnum {
+    let p_off = phoff + i * phentsize
+    if pie_read_u32_le(artifact.bytes, p_off) == @model.PT_DYNAMIC {
+      dynamic_off = pie_read_u64_le(artifact.bytes, p_off + 8)
+    }
+  }
+
+  let mut has_relacount = false
+  for i in 0..<24 {
+    let tag = pie_read_u64_le(artifact.bytes, dynamic_off.to_int() + i * 16)
+    if tag == 0x6ffffff9UL {
+      has_relacount = true
+    }
+    if tag == 0UL {
+      break
+    }
+  }
+  inspect(has_relacount, content="false")
+}
+
+///|
 test "write_pie_or_shared emits rela.plt and DT_JMPREL tags" {
   let ir = {
     ..pie_mk_ir(b"\x7fELF"),
@@ -1326,6 +1604,55 @@ test "write_pie_or_shared emits dynsym exported symbols" {
   inspect(dynsym_size, content="48")
   inspect(dynsym_entsize, content="24")
   inspect(dynsym_link > 0, content="true")
+}
+
+///|
+test "write_pie_or_shared excludes hidden symbols from dynsym" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 1UL, bytes: b"\x90\xC3" },
+    ],
+    merged_symbols: [
+      {
+        name: "foo",
+        output_sec: 0,
+        output_value: 0UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+      {
+        name: "bar_hidden",
+        output_sec: 0,
+        output_value: 1UL,
+        binding: Global,
+        ty: Func,
+        vis: Hidden,
+      },
+    ],
+  }
+
+  let artifact = write_pie_or_shared(
+    ir,
+    pie_test_opts_with_libs(SharedLibrary, ["libc.so.6"]),
+  )
+
+  let e_shoff = pie_read_u64_le(artifact.bytes, 40).to_int()
+  let e_shnum = pie_read_u16_le(artifact.bytes, 60).to_int()
+  let sh_entsize = pie_read_u16_le(artifact.bytes, 58).to_int()
+
+  let mut dynsym_size = 0UL
+  for i in 0..<e_shnum {
+    let sh_off = e_shoff + i * sh_entsize
+    let sh_type = pie_read_u32_le(artifact.bytes, sh_off + 4)
+    if sh_type == @model.SHT_DYNSYM {
+      dynsym_size = pie_read_u64_le(artifact.bytes, sh_off + 32)
+    }
+  }
+
+  // NULL + one exported symbol (foo); hidden symbol should not be exported.
+  inspect(dynsym_size, content="48")
 }
 
 ///|

@@ -143,12 +143,13 @@ test "write_pie_or_shared emits minimal dynamic metadata" {
   // DT_NEEDED("libc.so.6")
   inspect(pie_read_u64_le(artifact.bytes, dyn_off), content="1")
   inspect(pie_read_u64_le(artifact.bytes, dyn_off + 8), content="1")
-  // DT_STRTAB / DT_STRSZ / DT_SYMTAB / DT_SYMENT / DT_NULL
+  // DT_STRTAB / DT_STRSZ / DT_HASH / DT_SYMTAB / DT_SYMENT / DT_NULL
   inspect(pie_read_u64_le(artifact.bytes, dyn_off + 16), content="5")
   inspect(pie_read_u64_le(artifact.bytes, dyn_off + 32), content="10")
-  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 48), content="6")
-  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 64), content="11")
-  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 80), content="0")
+  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 48), content="4")
+  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 64), content="6")
+  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 80), content="11")
+  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 96), content="0")
 }
 
 ///|
@@ -197,6 +198,71 @@ test "write_pie_or_shared emits dynsym exported symbols" {
   inspect(dynsym_size, content="48")
   inspect(dynsym_entsize, content="24")
   inspect(dynsym_link > 0, content="true")
+}
+
+///|
+test "write_pie_or_shared emits hash section linked to dynsym" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 1UL, bytes: b"\x90\xC3" },
+    ],
+    merged_symbols: [
+      {
+        name: "foo",
+        output_sec: 0,
+        output_value: 0UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+  }
+
+  let artifact = write_pie_or_shared(
+    ir,
+    pie_test_opts_with_libs(SharedLibrary, ["libc.so.6"]),
+  ) catch {
+    _ => abort("unexpected writer error")
+  }
+
+  let e_shoff = pie_read_u64_le(artifact.bytes, 40).to_int()
+  let e_shnum = pie_read_u16_le(artifact.bytes, 60).to_int()
+  let sh_entsize = pie_read_u16_le(artifact.bytes, 58).to_int()
+
+  let mut dynsym_idx = -1
+  let mut hash_idx = -1
+  let mut hash_link = 0U
+  let mut hash_entsize = 0UL
+  let mut hash_off = 0UL
+  let mut hash_size = 0UL
+
+  for i = 0; i < e_shnum; i = i + 1 {
+    let sh_off = e_shoff + i * sh_entsize
+    let sh_type = pie_read_u32_le(artifact.bytes, sh_off + 4)
+    if sh_type == 11 {
+      dynsym_idx = i
+    }
+    if sh_type == 5 {
+      hash_idx = i
+      hash_off = pie_read_u64_le(artifact.bytes, sh_off + 24)
+      hash_size = pie_read_u64_le(artifact.bytes, sh_off + 32)
+      hash_link = pie_read_u32_le(artifact.bytes, sh_off + 40)
+      hash_entsize = pie_read_u64_le(artifact.bytes, sh_off + 56)
+    }
+  }
+
+  inspect(dynsym_idx >= 0, content="true")
+  inspect(hash_idx >= 0, content="true")
+  inspect(hash_link, content="\{dynsym_idx.reinterpret_as_uint()}")
+  inspect(hash_entsize, content="4")
+
+  // SysV hash table: nbucket=1, nchain=2, bucket[0]=1, chain[1]=0
+  inspect(hash_size, content="20")
+  inspect(pie_read_u32_le(artifact.bytes, hash_off.to_int()), content="1")
+  inspect(pie_read_u32_le(artifact.bytes, hash_off.to_int() + 4), content="2")
+  inspect(pie_read_u32_le(artifact.bytes, hash_off.to_int() + 8), content="1")
+  inspect(pie_read_u32_le(artifact.bytes, hash_off.to_int() + 16), content="0")
 }
 
 ///|

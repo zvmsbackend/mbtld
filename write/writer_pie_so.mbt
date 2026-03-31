@@ -231,6 +231,12 @@ priv struct PieDynRelaBuild {
 }
 
 ///|
+priv struct PieDynRelaOrder {
+  ordered : Array[PieDynRelaRec]
+  relative_prefix_count : UInt64
+}
+
+///|
 fn pie_exportable_symbol(sym : @ir.MergedSymbol) -> Bool {
   if sym.name == "" {
     return false
@@ -513,6 +519,30 @@ fn pie_should_lower_to_relative(ir : @ir.LinkIr, rec : PieDynRelaRec) -> Bool {
 }
 
 ///|
+fn pie_order_dyn_rela_for_relacount(
+  ir : @ir.LinkIr,
+  recs : Array[PieDynRelaRec],
+) -> PieDynRelaOrder {
+  let relative_part : Array[PieDynRelaRec] = []
+  let rest_part : Array[PieDynRelaRec] = []
+  for rec in recs {
+    if pie_should_lower_to_relative(ir, rec) {
+      relative_part.push(rec)
+    } else {
+      rest_part.push(rec)
+    }
+  }
+  let ordered : Array[PieDynRelaRec] = []
+  for rec in relative_part {
+    ordered.push(rec)
+  }
+  for rec in rest_part {
+    ordered.push(rec)
+  }
+  { ordered, relative_prefix_count: relative_part.length().to_uint64() }
+}
+
+///|
 fn pie_resolve_entry_addr(
   ir : @ir.LinkIr,
   opts : @ir.LinkOptions,
@@ -662,15 +692,15 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
     let rela_build = pie_build_dyn_rela_records(ir, dynsym_index_map)
     dyn_rela_recs = rela_build.rela_dyn
     plt_rela_recs = rela_build.rela_plt
+
+    let dyn_rela_order = pie_order_dyn_rela_for_relacount(ir, dyn_rela_recs)
+    dyn_rela_recs = dyn_rela_order.ordered
+    rela_relative_count = dyn_rela_order.relative_prefix_count
+
     has_rela_dyn = dyn_rela_recs.length() > 0
     has_rela_plt = plt_rela_recs.length() > 0
     has_pltgot = has_rela_plt
     has_flags_1 = opts.output_kind is ExecutablePie
-    for rec in dyn_rela_recs {
-      if pie_should_lower_to_relative(ir, rec) {
-        rela_relative_count += 1UL
-      }
-    }
     has_relacount = rela_relative_count > 0UL
 
     let dyn_build = pie_build_dynstr(

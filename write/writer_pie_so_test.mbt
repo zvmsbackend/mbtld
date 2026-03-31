@@ -530,6 +530,128 @@ test "write_pie_or_shared lowers local abs64 dynamic reloc to relative" {
 }
 
 ///|
+test "write_pie_or_shared orders relative relocations first for relacount" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      {
+        output_name: ".text",
+        output_index: 0,
+        align: 8UL,
+        bytes: b"\x90\x90\xC3",
+      },
+      {
+        output_name: ".data",
+        output_index: 1,
+        align: 8UL,
+        bytes: b"\x00\x00\x00\x00",
+      },
+    ],
+    merged_symbols: [
+      {
+        name: "ext_func",
+        output_sec: -1,
+        output_value: 0UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+      {
+        name: "a.o:local_func",
+        output_sec: 0,
+        output_value: 1UL,
+        binding: Local,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+    pending_relocs: [
+      {
+        out_sec: 1,
+        patch_off: 0UL,
+        rel_type: @model.R_X86_64_64,
+        target_sym: 0,
+        addend: 1L,
+        has_addend: true,
+      },
+      {
+        out_sec: 1,
+        patch_off: 8UL,
+        rel_type: @model.R_X86_64_64,
+        target_sym: 1,
+        addend: 2L,
+        has_addend: true,
+      },
+    ],
+  }
+
+  let artifact = write_pie_or_shared(
+    ir,
+    pie_test_opts_with_libs(SharedLibrary, ["libc.so.6"]),
+  )
+
+  let e_shoff = pie_read_u64_le(artifact.bytes, 40).to_int()
+  let e_shnum = pie_read_u16_le(artifact.bytes, 60).to_int()
+  let sh_entsize = pie_read_u16_le(artifact.bytes, 58).to_int()
+
+  let mut text_addr = 0UL
+  let mut rela_off = 0UL
+  let mut rela_size = 0UL
+  for i in 0..<e_shnum {
+    let sh_off = e_shoff + i * sh_entsize
+    let sh_type = pie_read_u32_le(artifact.bytes, sh_off + 4)
+    let sh_flags = pie_read_u64_le(artifact.bytes, sh_off + 8)
+    let sh_addr = pie_read_u64_le(artifact.bytes, sh_off + 16)
+    let sh_off_val = pie_read_u64_le(artifact.bytes, sh_off + 24)
+    let sh_size = pie_read_u64_le(artifact.bytes, sh_off + 32)
+    if sh_type == @model.SHT_PROGBITS &&
+      (sh_flags & @model.SHF_EXECINSTR) != 0UL &&
+      sh_size == 3UL {
+      text_addr = sh_addr
+    }
+    if sh_type == @model.SHT_RELA && sh_size == 48UL {
+      rela_off = sh_off_val
+      rela_size = sh_size
+    }
+  }
+
+  inspect(rela_size, content="48")
+  let r0 = rela_off.to_int()
+  let r1 = r0 + 24
+  // First entry must be RELATIVE due to relacount prefix ordering.
+  inspect(pie_read_u64_le(artifact.bytes, r0 + 8), content="8")
+  inspect(
+    pie_read_u64_le(artifact.bytes, r0 + 16),
+    content="\{text_addr + 3UL}",
+  )
+  // Second entry remains symbol-based ABS64 (sym index 1, type 1).
+  inspect(pie_read_u64_le(artifact.bytes, r1 + 8), content="4294967297")
+
+  let phnum = pie_read_u16_le(artifact.bytes, 56).to_int()
+  let phoff = pie_read_u64_le(artifact.bytes, 32).to_int()
+  let phentsize = pie_read_u16_le(artifact.bytes, 54).to_int()
+  let mut dynamic_off = 0UL
+  for i in 0..<phnum {
+    let p_off = phoff + i * phentsize
+    if pie_read_u32_le(artifact.bytes, p_off) == @model.PT_DYNAMIC {
+      dynamic_off = pie_read_u64_le(artifact.bytes, p_off + 8)
+    }
+  }
+  let mut has_relacount = false
+  for i in 0..<24 {
+    let tag = pie_read_u64_le(artifact.bytes, dynamic_off.to_int() + i * 16)
+    let val = pie_read_u64_le(artifact.bytes, dynamic_off.to_int() + i * 16 + 8)
+    if tag == 0x6ffffff9UL {
+      has_relacount = val == 1UL
+    }
+    if tag == 0UL {
+      break
+    }
+  }
+  inspect(has_relacount, content="true")
+}
+
+///|
 test "write_pie_or_shared emits rela.plt and DT_JMPREL tags" {
   let ir = {
     ..pie_mk_ir(b"\x7fELF"),

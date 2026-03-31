@@ -147,6 +147,74 @@ fn pie_max_u64(a : UInt64, b : UInt64) -> UInt64 {
 }
 
 ///|
+fn pie_min_u64(a : UInt64, b : UInt64) -> UInt64 {
+  if a < b {
+    a
+  } else {
+    b
+  }
+}
+
+///|
+priv struct PieLoadRange {
+  has_alloc : Bool
+  file_start : UInt64
+  file_end : UInt64
+  mem_start : UInt64
+  mem_end : UInt64
+}
+
+///|
+fn pie_empty_load_range() -> PieLoadRange {
+  {
+    has_alloc: false,
+    file_start: 0UL,
+    file_end: 0UL,
+    mem_start: 0UL,
+    mem_end: 0UL,
+  }
+}
+
+///|
+fn pie_extend_load_range(
+  range : PieLoadRange,
+  sec_ty : UInt,
+  sec_flags : UInt64,
+  sec_off : UInt64,
+  sec_addr : UInt64,
+  sec_size : UInt64,
+) -> PieLoadRange {
+  if (sec_flags & @model.SHF_ALLOC) == 0UL {
+    return range
+  }
+
+  let first = !range.has_alloc
+  let mut mem_start = range.mem_start
+  let mut mem_end = range.mem_end
+  if first {
+    mem_start = sec_addr
+    mem_end = sec_addr + sec_size
+  } else {
+    mem_start = pie_min_u64(mem_start, sec_addr)
+    mem_end = pie_max_u64(mem_end, sec_addr + sec_size)
+  }
+
+  let mut file_start = range.file_start
+  let mut file_end = range.file_end
+  if sec_ty != @model.SHT_NOBITS {
+    if first || file_end == 0UL {
+      file_start = sec_off
+      file_end = sec_off + sec_size
+    } else {
+      file_start = pie_min_u64(file_start, sec_off)
+      file_end = pie_max_u64(file_end, sec_off + sec_size)
+    }
+  }
+
+  { has_alloc: true, file_start, file_end, mem_start, mem_end }
+}
+
+///|
 fn pie_build_elf64_dyn(ir : @ir.LinkIr) -> Bytes {
   let section_names : Array[String] = []
   for sec in ir.merged_sections {
@@ -170,8 +238,8 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr) -> Bytes {
 
   let file : Array[Byte] = []
   let e_phoff = @model.ELF64_EHDR_SIZE.to_uint64()
-  let ph_count = 1
-  let ph_size_total = @model.ELF64_PHDR_SIZE * ph_count
+  let max_ph_count = 2
+  let ph_size_total = @model.ELF64_PHDR_SIZE * max_ph_count
   let data_start = @model.ELF64_EHDR_SIZE + ph_size_total
 
   for _ in 0..<data_start {
@@ -180,8 +248,8 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr) -> Bytes {
 
   let mut cursor = data_start
   let mut vcursor = data_start
-  let mut load_flags = @model.PF_R
-  let mut load_mem_end = data_start.to_uint64()
+  let mut rx_range = pie_empty_load_range()
+  let mut rw_range = pie_empty_load_range()
   for i = 0; i < ir.merged_sections.length(); i = i + 1 {
     let sec = ir.merged_sections[i]
     let sec_ty = pie_infer_sh_type(sec.output_name)
@@ -207,15 +275,24 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr) -> Bytes {
     vcursor += sec.bytes.length()
 
     if (sec_flags & @model.SHF_ALLOC) != 0UL {
-      load_mem_end = pie_max_u64(
-        load_mem_end,
-        sec_addr + sec.bytes.length().to_uint64(),
-      )
-      if (sec_flags & @model.SHF_EXECINSTR) != 0UL {
-        load_flags = load_flags | @model.PF_X
-      }
       if (sec_flags & @model.SHF_WRITE) != 0UL {
-        load_flags = load_flags | @model.PF_W
+        rw_range = pie_extend_load_range(
+          rw_range,
+          sec_ty,
+          sec_flags,
+          sec_off,
+          sec_addr,
+          sec.bytes.length().to_uint64(),
+        )
+      } else {
+        rx_range = pie_extend_load_range(
+          rx_range,
+          sec_ty,
+          sec_flags,
+          sec_off,
+          sec_addr,
+          sec.bytes.length().to_uint64(),
+        )
       }
     }
 
@@ -238,8 +315,6 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr) -> Bytes {
     file.push(b)
   }
   cursor += shstr_bytes.length()
-
-  let load_file_end = cursor.to_uint64()
 
   shdrs.push({
     sh_name: sh_name_offsets[section_names.length() - 1],
@@ -292,20 +367,43 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr) -> Bytes {
   pie_write_u32_le(file, 48, 0)
   pie_write_u16_le(file, 52, @model.ELF64_EHDR_SIZE.to_uint16())
   pie_write_u16_le(file, 54, @model.ELF64_PHDR_SIZE.to_uint16())
+
+  let ph_count = (if rx_range.has_alloc { 1 } else { 0 }) +
+    (if rw_range.has_alloc { 1 } else { 0 })
   pie_write_u16_le(file, 56, ph_count.to_uint16())
   pie_write_u16_le(file, 58, @model.ELF64_SHDR_SIZE.to_uint16())
   pie_write_u16_le(file, 60, shdrs.length().to_uint16())
   pie_write_u16_le(file, 62, (shdrs.length() - 1).to_uint16())
 
-  let ph_off = e_phoff.to_int()
-  pie_write_u32_le(file, ph_off, @model.PT_LOAD)
-  pie_write_u32_le(file, ph_off + 4, load_flags)
-  pie_write_u64_le(file, ph_off + 8, 0UL)
-  pie_write_u64_le(file, ph_off + 16, 0UL)
-  pie_write_u64_le(file, ph_off + 24, 0UL)
-  pie_write_u64_le(file, ph_off + 32, load_file_end)
-  pie_write_u64_le(file, ph_off + 40, pie_max_u64(load_mem_end, load_file_end))
-  pie_write_u64_le(file, ph_off + 48, 0x1000UL)
+  let mut ph_idx = 0
+  if rx_range.has_alloc {
+    let ph_off = e_phoff.to_int() + ph_idx * @model.ELF64_PHDR_SIZE
+    let file_start = rx_range.file_start
+    let file_end = pie_max_u64(rx_range.file_end, file_start)
+    pie_write_u32_le(file, ph_off, @model.PT_LOAD)
+    pie_write_u32_le(file, ph_off + 4, @model.PF_R | @model.PF_X)
+    pie_write_u64_le(file, ph_off + 8, file_start)
+    pie_write_u64_le(file, ph_off + 16, rx_range.mem_start)
+    pie_write_u64_le(file, ph_off + 24, rx_range.mem_start)
+    pie_write_u64_le(file, ph_off + 32, file_end - file_start)
+    pie_write_u64_le(file, ph_off + 40, rx_range.mem_end - rx_range.mem_start)
+    pie_write_u64_le(file, ph_off + 48, 0x1000UL)
+    ph_idx += 1
+  }
+
+  if rw_range.has_alloc {
+    let ph_off = e_phoff.to_int() + ph_idx * @model.ELF64_PHDR_SIZE
+    let file_start = rw_range.file_start
+    let file_end = pie_max_u64(rw_range.file_end, file_start)
+    pie_write_u32_le(file, ph_off, @model.PT_LOAD)
+    pie_write_u32_le(file, ph_off + 4, @model.PF_R | @model.PF_W)
+    pie_write_u64_le(file, ph_off + 8, file_start)
+    pie_write_u64_le(file, ph_off + 16, rw_range.mem_start)
+    pie_write_u64_le(file, ph_off + 24, rw_range.mem_start)
+    pie_write_u64_le(file, ph_off + 32, file_end - file_start)
+    pie_write_u64_le(file, ph_off + 40, rw_range.mem_end - rw_range.mem_start)
+    pie_write_u64_le(file, ph_off + 48, 0x1000UL)
+  }
 
   Bytes::from_array(file)
 }

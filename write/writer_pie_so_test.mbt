@@ -76,8 +76,11 @@ test "write_pie_or_shared emits merged payload" {
   inspect(artifact.bytes[17], content="b'\\x00'")
   inspect(artifact.bytes[32], content="b'\\x40'")
   inspect(artifact.bytes[54], content="b'\\x38'")
-  inspect(artifact.bytes[56], content="b'\\x01'")
+  inspect(artifact.bytes[56], content="b'\\x02'")
   inspect(artifact.bytes[64], content="b'\\x01'")
+  inspect(artifact.bytes[68], content="b'\\x05'")
+  inspect(artifact.bytes[120], content="b'\\x01'")
+  inspect(artifact.bytes[124], content="b'\\x06'")
 }
 
 ///|

@@ -1,6 +1,8 @@
 import {
   "sennenki/mbtld/ir",
+  "sennenki/mbtld/elf/read",
   "sennenki/mbtld/resolve",
   "sennenki/mbtld/reloc",
   "sennenki/mbtld/write",
+  "moonbitlang/x/fs",
 }

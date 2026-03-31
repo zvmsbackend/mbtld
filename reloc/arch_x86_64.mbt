@@ -55,11 +55,9 @@ pub fn apply_x86_64_reloc(
 ///|
 fn patch_u64(bytes : Bytes, offset : UInt64, value : UInt64) -> Unit {
   // TODO: implement byte patching
-  ignore((bytes, offset, value))
 }
 
 ///|
 fn patch_u32(bytes : Bytes, offset : UInt64, value : UInt64) -> Unit {
   // TODO: implement byte patching
-  ignore((bytes, offset, value))
 }

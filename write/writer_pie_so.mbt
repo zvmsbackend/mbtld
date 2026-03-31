@@ -515,7 +515,10 @@ fn pie_should_lower_to_relative(ir : @ir.LinkIr, rec : PieDynRelaRec) -> Bool {
     return false
   }
   let sym = ir.merged_symbols[rec.target_sym]
-  sym.binding is Local && sym.output_sec >= 0
+  if sym.output_sec < 0 {
+    return false
+  }
+  sym.binding is Local || sym.vis is Hidden || sym.vis is Internal
 }
 
 ///|
@@ -1045,9 +1048,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
       // Non-preemptible local absolute relocations can be expressed as RELATIVE.
       if pie_should_lower_to_relative(ir, rec) {
         let sym = ir.merged_symbols[rec.target_sym]
-        if sym.binding is Local &&
-          sym.output_sec >= 0 &&
-          sym.output_sec < section_addrs.length() {
+        if sym.output_sec >= 0 && sym.output_sec < section_addrs.length() {
           r_info = @model.R_X86_64_RELATIVE.to_uint64()
           let sym_addr = section_addrs[sym.output_sec] + sym.output_value
           r_addend = rec.addend + sym_addr.reinterpret_as_int64()

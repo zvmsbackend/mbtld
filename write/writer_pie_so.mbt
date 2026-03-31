@@ -170,6 +170,8 @@ fn pie_infer_sh_entsize(name : String, sec_ty : UInt) -> UInt64 {
 priv struct PieDynBuild {
   dynstr : Bytes
   needed_offsets : Array[UInt64]
+  soname_offset : UInt64
+  has_soname : Bool
   sym_name_offsets : Array[UInt]
 }
 
@@ -193,25 +195,57 @@ fn pie_append_cstr_with_offset(arr : Array[Byte], s : String) -> UInt {
 
 ///|
 fn pie_build_dynstr(
+  soname : String?,
   libs : Array[String],
   exported_symbols : Array[@ir.MergedSymbol],
 ) -> PieDynBuild {
   let arr : Array[Byte] = [0]
   let offs : Array[UInt64] = []
+  let mut soname_offset = 0UL
+  let mut has_soname = false
   let sym_name_offsets : Array[UInt] = []
+  if soname is Some(name) {
+    has_soname = true
+    soname_offset = pie_append_cstr_with_offset(arr, name).to_uint64()
+  }
   for lib in libs {
     offs.push(pie_append_cstr_with_offset(arr, lib).to_uint64())
   }
   for sym in exported_symbols {
     sym_name_offsets.push(pie_append_cstr_with_offset(arr, sym.name))
   }
-  { dynstr: Bytes::from_array(arr), needed_offsets: offs, sym_name_offsets }
+  {
+    dynstr: Bytes::from_array(arr),
+    needed_offsets: offs,
+    soname_offset,
+    has_soname,
+    sym_name_offsets,
+  }
 }
 
 ///|
-fn pie_build_dynamic_placeholder(needed_count : Int) -> Bytes {
-  // DT_NEEDED[*], DT_STRTAB, DT_STRSZ, DT_HASH, DT_SYMTAB, DT_SYMENT, DT_NULL
-  let entry_count = needed_count + 6
+fn pie_output_basename(path : String) -> String {
+  let mut last_sep = -1
+  for i = 0; i < path.length(); i = i + 1 {
+    let ch = path[i]
+    if ch == 47 || ch == 92 {
+      last_sep = i
+    }
+  }
+  if last_sep >= 0 {
+    path[last_sep + 1:].to_string()
+  } else {
+    path
+  }
+}
+
+///|
+fn pie_build_dynamic_placeholder(
+  needed_count : Int,
+  has_soname : Bool,
+) -> Bytes {
+  // DT_NEEDED[*], optional DT_SONAME, DT_STRTAB, DT_STRSZ, DT_HASH, DT_SYMTAB, DT_SYMENT, DT_NULL
+  let entry_count = needed_count + (if has_soname { 1 } else { 0 }) + 6
   let out : Array[Byte] = []
   for _ in 0..<(entry_count * 16) {
     out.push(0)
@@ -442,19 +476,32 @@ fn pie_extend_load_range(
 fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   let sections = ir.merged_sections
   let mut dyn_needed_offsets : Array[UInt64] = []
+  let mut dyn_soname_offset = 0UL
+  let mut dyn_has_soname = false
   let exported_symbols : Array[@ir.MergedSymbol] = []
   let mut has_dynamic = false
-  if opts.dynamic_libs.length() > 0 {
+  let soname = if opts.output_kind == @ir.SharedLibrary && opts.output != "" {
+    Some(pie_output_basename(opts.output))
+  } else {
+    None
+  }
+  if opts.dynamic_libs.length() > 0 || soname is Some(_) {
     for sym in ir.merged_symbols {
       if pie_exportable_symbol(sym) {
         exported_symbols.push(sym)
       }
     }
 
-    let dyn_build = pie_build_dynstr(opts.dynamic_libs, exported_symbols)
+    let dyn_build = pie_build_dynstr(
+      soname,
+      opts.dynamic_libs,
+      exported_symbols,
+    )
     let dynsym = pie_build_dynsym(exported_symbols, dyn_build.sym_name_offsets)
     let hash = pie_build_sysv_hash(exported_symbols)
     dyn_needed_offsets = dyn_build.needed_offsets
+    dyn_soname_offset = dyn_build.soname_offset
+    dyn_has_soname = dyn_build.has_soname
     has_dynamic = true
     sections.push({
       output_name: ".hash",
@@ -478,7 +525,10 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
       output_name: ".dynamic",
       output_index: sections.length(),
       align: 8UL,
-      bytes: pie_build_dynamic_placeholder(opts.dynamic_libs.length()),
+      bytes: pie_build_dynamic_placeholder(
+        opts.dynamic_libs.length(),
+        dyn_has_soname,
+      ),
     })
   }
 
@@ -755,6 +805,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
     // Dynamic tags for the minimal loader contract.
     let dt_null = 0UL
     let dt_needed = 1UL
+    let dt_soname = 14UL
     let dt_hash = 4UL
     let dt_strtab = 5UL
     let dt_symtab = 6UL
@@ -764,6 +815,12 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
     let mut dyn_idx = 0
     for off in dyn_needed_offsets {
       pie_dynamic_set_entry(file, dynamic_off, dyn_idx, dt_needed, off)
+      dyn_idx += 1
+    }
+    if dyn_has_soname {
+      pie_dynamic_set_entry(
+        file, dynamic_off, dyn_idx, dt_soname, dyn_soname_offset,
+      )
       dyn_idx += 1
     }
     pie_dynamic_set_entry(file, dynamic_off, dyn_idx, dt_strtab, dynstr_addr)

@@ -140,16 +140,18 @@ test "write_pie_or_shared emits minimal dynamic metadata" {
   inspect(artifact.bytes[180], content="b'\\x06'")
 
   let dyn_off = pie_read_u64_le(artifact.bytes, 184).to_int()
-  // DT_NEEDED("libc.so.6")
+  // DT_NEEDED("libc.so.6") and DT_SONAME("a.out")
   inspect(pie_read_u64_le(artifact.bytes, dyn_off), content="1")
-  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 8), content="1")
+  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 8), content="7")
+  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 16), content="14")
+  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 24), content="1")
   // DT_STRTAB / DT_STRSZ / DT_HASH / DT_SYMTAB / DT_SYMENT / DT_NULL
-  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 16), content="5")
-  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 32), content="10")
-  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 48), content="4")
-  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 64), content="6")
-  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 80), content="11")
-  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 96), content="0")
+  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 32), content="5")
+  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 48), content="10")
+  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 64), content="4")
+  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 80), content="6")
+  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 96), content="11")
+  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 112), content="0")
 }
 
 ///|
@@ -263,6 +265,32 @@ test "write_pie_or_shared emits hash section linked to dynsym" {
   inspect(pie_read_u32_le(artifact.bytes, hash_off.to_int() + 4), content="2")
   inspect(pie_read_u32_le(artifact.bytes, hash_off.to_int() + 8), content="1")
   inspect(pie_read_u32_le(artifact.bytes, hash_off.to_int() + 16), content="0")
+}
+
+///|
+test "write_pie_or_shared emits soname without needed libs" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 1UL, bytes: b"\xaa" },
+    ],
+  }
+  let opts = {
+    ..pie_test_opts_with_libs(SharedLibrary, []),
+    output: "build/out/libmbtld.so",
+  }
+
+  let artifact = write_pie_or_shared(ir, opts) catch {
+    _ => abort("unexpected writer error")
+  }
+
+  let dyn_off = pie_read_u64_le(artifact.bytes, 184).to_int()
+  // DT_SONAME should be first tag when no DT_NEEDED exists.
+  inspect(pie_read_u64_le(artifact.bytes, dyn_off), content="14")
+  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 8), content="1")
+  // Then DT_STRTAB and DT_STRSZ.
+  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 16), content="5")
+  inspect(pie_read_u64_le(artifact.bytes, dyn_off + 32), content="10")
 }
 
 ///|

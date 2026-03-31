@@ -74,7 +74,15 @@ pub fn apply_relocations(
           pending.addend,
           pending.patch_off,
         )
-      _ => raise UnsupportedRelocType(pending.rel_type)
+      LOONGARCH64 =>
+        apply_loongarch64_reloc(
+          sec.bytes,
+          pending.patch_off,
+          pending.rel_type,
+          sym_value,
+          pending.addend,
+          pending.patch_off,
+        )
     }
 
     sections[pending.out_sec] = { ..sec, bytes: patched }
@@ -111,5 +119,5 @@ fn is_riscv64_reloc_supported(rel_type : UInt) -> Bool {
 
 ///|
 fn is_loongarch64_reloc_supported(rel_type : UInt) -> Bool {
-  rel_type <= 3
+  rel_type == 1 || rel_type == 3
 }

@@ -8,6 +8,8 @@ import {
 // Values
 pub fn apply_aarch64_reloc(Bytes, UInt64, UInt, UInt64, Int64, UInt64) -> Bytes raise @ir.RelocError
 
+pub fn apply_loongarch64_reloc(Bytes, UInt64, UInt, UInt64, Int64, UInt64) -> Bytes raise @ir.RelocError
+
 pub fn apply_relocations(@ir.LinkIr, @ir.LinkOptions) -> @ir.LinkIr raise @ir.RelocError
 
 pub fn apply_riscv64_reloc(Bytes, UInt64, UInt, UInt64, Int64, UInt64) -> Bytes raise @ir.RelocError

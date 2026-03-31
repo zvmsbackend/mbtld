@@ -189,6 +189,79 @@ test "write_relocatable emits symtab and strtab" {
 }
 
 ///|
+test "write_relocatable emits rela section with symtab link" {
+  let raw = b"\x7fELF"
+  let ir = {
+    ..mk_ir([mk_input("a.o", raw)]),
+    merged_sections: [
+      {
+        output_name: ".text",
+        output_index: 0,
+        align: 1UL,
+        bytes: b"\x90\x90\x90\x90",
+      },
+    ],
+    merged_symbols: [
+      {
+        name: "foo",
+        output_sec: 0,
+        output_value: 0UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+    pending_relocs: [
+      { out_sec: 0, patch_off: 1UL, rel_type: 2, target_sym: 0, addend: 7 },
+    ],
+  }
+
+  let artifact = write_relocatable(ir, test_opts())
+  let bytes = artifact.bytes
+
+  let e_shoff = rr_read_u64_le(bytes, 40).to_int()
+  let e_shentsize = rr_read_u16_le(bytes, 58).to_int()
+  let e_shnum = rr_read_u16_le(bytes, 60).to_int()
+
+  let mut symtab_idx = -1
+  let mut rela_idx = -1
+  let mut rela_link = 0U
+  let mut rela_info = 0U
+  let mut rela_entsize = 0UL
+  let mut rela_off = 0UL
+  let mut rela_size = 0UL
+
+  for i in 0..<e_shnum {
+    let sh_off = e_shoff + i * e_shentsize
+    let sh_type = rr_read_u32_le(bytes, sh_off + 4)
+    if sh_type == 2 {
+      symtab_idx = i
+    }
+    if sh_type == 4 {
+      rela_idx = i
+      rela_link = rr_read_u32_le(bytes, sh_off + 40)
+      rela_info = rr_read_u32_le(bytes, sh_off + 44)
+      rela_entsize = rr_read_u64_le(bytes, sh_off + 56)
+      rela_off = rr_read_u64_le(bytes, sh_off + 24)
+      rela_size = rr_read_u64_le(bytes, sh_off + 32)
+    }
+  }
+
+  inspect(symtab_idx >= 0, content="true")
+  inspect(rela_idx >= 0, content="true")
+  inspect(rela_link, content="\{symtab_idx.reinterpret_as_uint()}")
+  inspect(rela_info, content="1")
+  inspect(rela_entsize, content="24")
+  inspect(rela_size, content="24")
+
+  let r_off = rela_off.to_int()
+  inspect(rr_read_u64_le(bytes, r_off), content="1")
+  // r_info = (sym_index=1 << 32) | rel_type(2)
+  inspect(rr_read_u64_le(bytes, r_off + 8), content="4294967298")
+  inspect(rr_read_u64_le(bytes, r_off + 16), content="7")
+}
+
+///|
 test "write_relocatable fails on multi-input without merged sections" {
   let ir = mk_ir([mk_input("a.o", b"A"), mk_input("b.o", b"B")])
 

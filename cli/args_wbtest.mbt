@@ -2,11 +2,11 @@
 test "parse_args rejects missing input-path" {
   let mut ok = false
   try {
-    ignore(
-      parse_args([
-        "mbtld", "-o", "out.o", "--input-path", "/tmp/mbtld/path/that/does/not/exist",
-      ]),
-    )
+    [
+      "mbtld", "-o", "out.o", "--input-path", "/tmp/mbtld/path/that/does/not/exist",
+    ]
+    |> parse_args
+    |> ignore
     abort("expected parse error")
   } catch {
     InvalidArgs(_) => ok = true

@@ -239,7 +239,7 @@ test "write_pie_or_shared emits DT_FLAGS_1 for executable pie" {
   let mut dynamic_off = 0UL
   for i in 0..<phnum {
     let p_off = phoff + i * phentsize
-    if pie_read_u32_le(artifact.bytes, p_off) == @model.PT_DYNAMIC {
+    if pie_read_u32_le(artifact.bytes, p_off) is @model.PT_DYNAMIC {
       dynamic_off = pie_read_u64_le(artifact.bytes, p_off + 8)
     }
   }
@@ -505,12 +505,7 @@ test "write_pie_or_shared uses efi_main fallback for EFI output" {
   let ir = {
     ..pie_mk_ir(b"\x7fELF"),
     merged_sections: [
-      {
-        output_name: ".text",
-        output_index: 0,
-        align: 1UL,
-        bytes: b"\x90\xC3",
-      },
+      { output_name: ".text", output_index: 0, align: 1UL, bytes: b"\x90\xC3" },
     ],
     merged_symbols: [
       {
@@ -612,7 +607,7 @@ test "write_pie_or_shared emits rela.dyn and DT_RELA tags" {
   for i in 0..<e_shnum {
     let sh_off = e_shoff + i * sh_entsize
     let sh_type = pie_read_u32_le(artifact.bytes, sh_off + 4)
-    if sh_type == @model.SHT_RELA {
+    if sh_type is @model.SHT_RELA {
       rela_off = pie_read_u64_le(artifact.bytes, sh_off + 24)
       rela_size = pie_read_u64_le(artifact.bytes, sh_off + 32)
       rela_link = pie_read_u32_le(artifact.bytes, sh_off + 40)
@@ -708,12 +703,12 @@ test "write_pie_or_shared lowers local abs64 dynamic reloc to relative" {
     let sh_addr = pie_read_u64_le(artifact.bytes, sh_off + 16)
     let sh_off_val = pie_read_u64_le(artifact.bytes, sh_off + 24)
     let sh_size = pie_read_u64_le(artifact.bytes, sh_off + 32)
-    if sh_type == @model.SHT_PROGBITS &&
+    if sh_type is @model.SHT_PROGBITS &&
       (sh_flags & @model.SHF_EXECINSTR) != 0UL &&
       sh_size == 3UL {
       text_addr = sh_addr
     }
-    if sh_type == @model.SHT_RELA && sh_size == 24UL {
+    if sh_type is @model.SHT_RELA && sh_size == 24UL {
       rela_off = sh_off_val
     }
   }
@@ -731,7 +726,7 @@ test "write_pie_or_shared lowers local abs64 dynamic reloc to relative" {
   let mut dynamic_off = 0UL
   for i in 0..<phnum {
     let p_off = phoff + i * phentsize
-    if pie_read_u32_le(artifact.bytes, p_off) == @model.PT_DYNAMIC {
+    if pie_read_u32_le(artifact.bytes, p_off) is @model.PT_DYNAMIC {
       dynamic_off = pie_read_u64_le(artifact.bytes, p_off + 8)
     }
   }

@@ -356,10 +356,9 @@ fn rr_build_symtab_and_strtab(
   }
 
   let strtab : Array[Byte] = [0]
-  let st_name_offsets : Array[UInt] = []
-  for entry in ordered {
-    st_name_offsets.push(rr_append_cstr_with_offset(strtab, entry.1.name))
-  }
+  let st_name_offsets = ordered.map(entry => {
+    rr_append_cstr_with_offset(strtab, entry.1.name)
+  })
 
   let symtab : Array[Byte] = []
   for _ in 0..<@model.ELF64_SYM_SIZE {

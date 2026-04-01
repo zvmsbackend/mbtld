@@ -27,7 +27,7 @@ fn mk_opts(inputs : Array[String]) -> @ir.LinkOptions {
 test "link rejects empty input list" {
   let mut msg = ""
   try {
-    link(mk_opts([])) |> ignore
+    [] |> mk_opts |> link |> ignore
     abort("expected error")
   } catch {
     @ir.Cli(@ir.InvalidArgs(m)) => msg = m
@@ -43,7 +43,7 @@ test "link preserves detailed ELF parse error" {
 
   let mut msg = ""
   try {
-    link(mk_opts([path])) |> ignore
+    [path] |> mk_opts |> link |> ignore
     abort("expected parse failure")
   } catch {
     @ir.Elf(@ir.InvalidObjectType(m)) => msg = m

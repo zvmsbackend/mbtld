@@ -281,7 +281,7 @@ fn read_section_header(
     .unwrap_or_error()
 
   // Load section data
-  let sec_data = if sh_type == @model.SHT_NOBITS || sh_size == 0 {
+  let sec_data = if sh_type is @model.SHT_NOBITS || sh_size == 0 {
     b""
   } else if sh_offset.to_int() + sh_size.to_int() > data.length() {
     b""
@@ -335,7 +335,7 @@ fn parse_symbols(
   data : Bytes,
 ) -> Array[ParsedSymbol] raise ElfError {
   // Find .symtab section
-  let symtab_idx = sections.search_by(sec => sec.sh_type == @model.SHT_SYMTAB)
+  let symtab_idx = sections.search_by(sec => sec.sh_type is @model.SHT_SYMTAB)
   guard symtab_idx is Some(symtab_idx) else { return [] }
   let symtab_sec = sections[symtab_idx]
   if symtab_sec.sh_link.reinterpret_as_int() >= sections.length() {
@@ -350,10 +350,11 @@ fn parse_symbols(
 
   let sym_off = symtab_sec.sh_offset.to_int()
   let sym_end = (symtab_sec.sh_offset + symtab_sec.sh_size).to_int()
-  let sym_size = @model.ELF64_SYM_SIZE
 
   let symbols : Array[ParsedSymbol] = []
-  for pos = sym_off; pos + sym_size <= sym_end; pos = pos + sym_size {
+  for pos = sym_off
+      pos + @model.ELF64_SYM_SIZE <= sym_end
+      pos = pos + @model.ELF64_SYM_SIZE {
     let st_name = @base.read_u32_le(data, pos)
     let st_info = if pos + 4 < data.length() { data[pos + 4] } else { 0 }
     let st_other = if pos + 5 < data.length() { data[pos + 5] } else { 0 }
@@ -383,13 +384,13 @@ fn parse_relocations(
 ) -> Array[ParsedRelocation] raise ElfError {
   let relocations = []
   for sec in sections {
-    if sec.sh_type == @model.SHT_RELA {
+    if sec.sh_type is @model.SHT_RELA {
       if sec.sh_size.to_int() % @model.ELF64_RELA_SIZE != 0 {
         raise InvalidRelocation("SHT_RELA section size is not entry-aligned")
       }
       let relas = parse_rela_section(sec, data)
       relocations.append(relas)
-    } else if sec.sh_type == @model.SHT_REL {
+    } else if sec.sh_type is @model.SHT_REL {
       if sec.sh_size.to_int() % @model.ELF64_REL_SIZE != 0 {
         raise InvalidRelocation("SHT_REL section size is not entry-aligned")
       }
@@ -409,9 +410,10 @@ fn parse_rela_section(
   let relocations : Array[ParsedRelocation] = []
   let off = sec.sh_offset.to_int()
   let end = (sec.sh_offset + sec.sh_size).to_int()
-  let rela_size = @model.ELF64_RELA_SIZE
 
-  for pos = off; pos + rela_size <= end; pos = pos + rela_size {
+  for pos = off
+      pos + @model.ELF64_RELA_SIZE <= end
+      pos = pos + @model.ELF64_RELA_SIZE {
     let r_offset = @base.read_u64_le(data, pos)
     let r_info = @base.read_u64_le(data, pos + 8)
     let r_addend = @base.read_i64_le(data, pos + 16)
@@ -435,9 +437,10 @@ fn parse_rel_section(
   let relocations : Array[ParsedRelocation] = []
   let off = sec.sh_offset.to_int()
   let end = (sec.sh_offset + sec.sh_size).to_int()
-  let rel_size = @model.ELF64_REL_SIZE
 
-  for pos = off; pos + rel_size <= end; pos = pos + rel_size {
+  for pos = off
+      pos + @model.ELF64_REL_SIZE <= end
+      pos = pos + @model.ELF64_REL_SIZE {
     let r_offset = @base.read_u64_le(data, pos)
     let r_info = @base.read_u64_le(data, pos + 8)
     relocations.push({

@@ -8,9 +8,13 @@ import {
 // Values
 pub fn error(String, String) -> Diagnostic
 
+pub fn error_at(String, String, file? : String, section? : String, symbol? : String) -> Diagnostic
+
 pub fn get_output_section(String) -> String
 
 pub fn info(String, String) -> Diagnostic
+
+pub fn info_at(String, String, file? : String, section? : String, symbol? : String) -> Diagnostic
 
 pub fn merge_sections(@ir.LinkIr, @ir.LinkOptions) -> @ir.LinkIr raise @ir.ResolveError
 
@@ -20,7 +24,11 @@ pub fn section_order(String) -> Int
 
 pub fn to_diagnostic(@ir.ResolveError) -> String
 
+pub fn to_structured_diagnostic(@ir.ResolveError, file? : String, section? : String, symbol? : String) -> Diagnostic
+
 pub fn warning(String, String) -> Diagnostic
+
+pub fn warning_at(String, String, file? : String, section? : String, symbol? : String) -> Diagnostic
 
 // Errors
 

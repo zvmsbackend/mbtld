@@ -272,9 +272,9 @@ pub fn parse_args(args : Array[String]) -> @ir.LinkOptions raise @ir.CliError {
     dynamic_libs,
     dynamic_linker,
     strip_symbols: matches.flags.contains("strip-symbols") ||
-      matches.flags.contains("no-symbol-table"),
+    matches.flags.contains("no-symbol-table"),
     strip_debug: matches.flags.contains("strip-debug") ||
-      matches.flags.contains("no-debug-frame"),
+    matches.flags.contains("no-debug-frame"),
     no_default_lib: matches.flags.contains("no-default-lib"),
     smart_linking: matches.flags.contains("smart-linking"),
     linker_heap_no_smart: matches.flags.contains("linker-heap-no-smart"),
@@ -316,7 +316,7 @@ fn parse_uint(s : String) -> UInt {
 ///|
 fn parse_uint64_option(values : Array[String]?) -> UInt64? {
   match values {
-    Some([s, ..]) => Some(parse_uint64(s))
+    Some([s, ..]) => Some(s |> parse_uint64)
     _ => None
   }
 }
@@ -324,7 +324,7 @@ fn parse_uint64_option(values : Array[String]?) -> UInt64? {
 ///|
 fn parse_uint_option(values : Array[String]?) -> UInt? {
   match values {
-    Some([s, ..]) => Some(parse_uint(s))
+    Some([s, ..]) => Some(s |> parse_uint)
     _ => None
   }
 }
@@ -338,12 +338,7 @@ fn append_unique(items : Array[String], value : String) -> Unit {
 
 ///|
 fn has_any_suffix(name : String, suffixes : Array[String]) -> Bool {
-  for suffix in suffixes {
-    if name.has_suffix(suffix) {
-      return true
-    }
-  }
-  false
+  suffixes.iter().any(suffix => name.has_suffix(suffix))
 }
 
 ///|

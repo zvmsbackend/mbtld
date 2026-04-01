@@ -24,23 +24,9 @@ fn pipeline_diag(
   symbol? : String,
 ) -> @resolve.Diagnostic {
   match level {
-    Error => @resolve.error_at(code, message, file?=file, section?=section, symbol?=symbol)
-    Warning =>
-      @resolve.warning_at(
-        code,
-        message,
-        file?=file,
-        section?=section,
-        symbol?=symbol,
-      )
-    Info =>
-      @resolve.info_at(
-        code,
-        message,
-        file?=file,
-        section?=section,
-        symbol?=symbol,
-      )
+    Error => @resolve.error_at(code, message, file?, section?, symbol?)
+    Warning => @resolve.warning_at(code, message, file?, section?, symbol?)
+    Info => @resolve.info_at(code, message, file?, section?, symbol?)
   }
 }
 
@@ -75,9 +61,7 @@ fn pipeline_validate_option_matrix(
     }
     if opts.dynamic_libs.length() > 0 {
       raise Cli(
-        @ir.InvalidArgs(
-          "dynamic libraries are not supported for EFI outputs",
-        ),
+        @ir.InvalidArgs("dynamic libraries are not supported for EFI outputs"),
       )
     }
   }

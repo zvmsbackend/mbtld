@@ -287,17 +287,17 @@ fn pie_write_plt_x86_64(
 
 ///|
 fn pie_infer_sh_entsize(name : String, sec_ty : UInt) -> UInt64 {
-  if name == ".dynamic" || sec_ty == @model.SHT_DYNAMIC {
+  if name == ".dynamic" || sec_ty is @model.SHT_DYNAMIC {
     16UL
-  } else if name == ".hash" || sec_ty == @model.SHT_HASH {
+  } else if name == ".hash" || sec_ty is @model.SHT_HASH {
     4UL
   } else if name == ".plt" {
     16UL
   } else if name == ".rela.dyn" ||
     name == ".rela.plt" ||
-    sec_ty == @model.SHT_RELA {
+    sec_ty is @model.SHT_RELA {
     @model.ELF64_RELA_SIZE.to_uint64()
-  } else if name == ".dynsym" || sec_ty == @model.SHT_DYNSYM {
+  } else if name == ".dynsym" || sec_ty is @model.SHT_DYNSYM {
     @model.ELF64_SYM_SIZE.to_uint64()
   } else {
     0UL
@@ -343,7 +343,7 @@ fn pie_exportable_symbol(sym : @ir.MergedSymbol) -> Bool {
   if sym.binding is Local {
     return false
   }
-  !(sym.vis is Hidden || sym.vis is Internal)
+  !(sym.vis is (Hidden | Internal))
 }
 
 ///|
@@ -403,10 +403,10 @@ fn pie_output_basename(path : String) -> String {
 
 ///|
 fn pie_build_interp(path : String) -> Bytes {
-  let out : Array[Byte] = []
-  for ch in path {
-    out.push(Char::to_int(ch).to_byte())
-  }
+  let out : Array[Byte] = path
+    .iter()
+    .map(ch => Char::to_int(ch).to_byte())
+    .collect()
   out.push(0)
   Bytes::from_array(out)
 }
@@ -602,7 +602,7 @@ fn pie_build_dyn_rela_records(
       rel_type: reloc.rel_type,
       target_sym: reloc.target_sym,
     }
-    if ir.arch is X86_64 && reloc.rel_type == @model.R_X86_64_JUMP_SLOT {
+    if ir.arch is X86_64 && reloc.rel_type is @model.R_X86_64_JUMP_SLOT {
       rela_plt.push(rec)
     } else {
       rela_dyn.push(rec)
@@ -686,14 +686,16 @@ fn pie_is_efi_output(kind : @ir.OutputKind) -> Bool {
 
 ///|
 fn pie_entry_candidates(opts : @ir.LinkOptions) -> Array[String] {
-  if opts.entry != "" {
-    [opts.entry]
-  } else if opts.output_kind is @ir.ExecutablePie {
-    ["_start", "main"]
-  } else if pie_is_efi_output(opts.output_kind) {
-    ["efi_main", "_start", "main"]
-  } else {
-    []
+  match opts.entry {
+    "" =>
+      if opts.output_kind is @ir.ExecutablePie {
+        ["_start", "main"]
+      } else if pie_is_efi_output(opts.output_kind) {
+        ["efi_main", "_start", "main"]
+      } else {
+        []
+      }
+    _ => [opts.entry]
   }
 }
 
@@ -1287,7 +1289,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
       let r_off = got_plt_addr + ((3 + i) * 8).to_uint64()
       let entry_off = rela_plt_off.to_int() + i * @model.ELF64_RELA_SIZE
       let r_addend = if ir.arch is X86_64 &&
-        rec.rel_type == @model.R_X86_64_JUMP_SLOT {
+        rec.rel_type is @model.R_X86_64_JUMP_SLOT {
         0L
       } else {
         rec.addend

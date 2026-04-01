@@ -174,6 +174,81 @@ fn find_merged_symbol_index(
 }
 
 ///|
+fn section_rank(name : String) -> Int {
+  @resolve.section_order(name)
+}
+
+///|
+fn reorder_sections_and_remap(
+  merged_sections : Array[@ir.MergedSection],
+  sec_index_maps : Array[Array[Int]],
+  merged_symbols : Array[@ir.MergedSymbol],
+  pending_relocs : Array[@ir.PendingReloc],
+) -> Unit {
+  let sec_count = merged_sections.length()
+  if sec_count <= 1 {
+    return
+  }
+
+  let old_to_new : Array[Int] = []
+  let used : Array[Bool] = []
+  for _ in 0..<sec_count {
+    old_to_new.push(-1)
+    used.push(false)
+  }
+
+  let reordered : Array[@ir.MergedSection] = []
+  for new_idx in 0..<sec_count {
+    let mut best_old = -1
+    let mut best_rank = 0
+    for old_idx in 0..<sec_count {
+      if used[old_idx] {
+        continue
+      }
+      let rank = section_rank(merged_sections[old_idx].output_name)
+      if best_old < 0 || rank < best_rank {
+        best_old = old_idx
+        best_rank = rank
+      }
+    }
+
+    used[best_old] = true
+    old_to_new[best_old] = new_idx
+    let sec = merged_sections[best_old]
+    reordered.push({ ..sec, output_index: new_idx })
+  }
+
+  for i in 0..<sec_count {
+    merged_sections[i] = reordered[i]
+  }
+
+  for obj_idx in 0..<sec_index_maps.length() {
+    let sec_map = sec_index_maps[obj_idx]
+    for i in 0..<sec_map.length() {
+      let old_idx = sec_map[i]
+      if old_idx >= 0 {
+        sec_map[i] = old_to_new[old_idx]
+      }
+    }
+    sec_index_maps[obj_idx] = sec_map
+  }
+
+  for i in 0..<merged_symbols.length() {
+    let sym = merged_symbols[i]
+    if sym.output_sec >= 0 {
+      merged_symbols[i] = { ..sym, output_sec: old_to_new[sym.output_sec] }
+    }
+  }
+
+  for i in 0..<pending_relocs.length() {
+    let reloc = pending_relocs[i]
+    if reloc.out_sec >= 0 {
+      pending_relocs[i] = { ..reloc, out_sec: old_to_new[reloc.out_sec] }
+    }
+  }
+}
+
+///|
 /// Convert parsed object to IR input object
 pub fn from_parsed_object(parsed : @read.ParsedObject) -> @ir.InputObject {
   let sections = parsed.sections.mapi((idx, sec) => convert_section(sec, idx))
@@ -224,11 +299,13 @@ pub fn build_ir(
         continue
       }
 
-      let mut out_idx = find_merged_section_index(merged_sections, sec.name)
+      let out_name = @resolve.get_output_section(sec.name)
+
+      let mut out_idx = find_merged_section_index(merged_sections, out_name)
       if out_idx < 0 {
         out_idx = merged_sections.length()
         merged_sections.push({
-          output_name: sec.name,
+          output_name: out_name,
           output_index: out_idx,
           align: if sec.align == 0UL {
             1UL
@@ -323,6 +400,10 @@ pub fn build_ir(
       })
     }
   }
+
+  reorder_sections_and_remap(
+    merged_sections, sec_index_maps, merged_symbols, pending_relocs,
+  )
 
   {
     arch,

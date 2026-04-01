@@ -24,14 +24,14 @@ fn load_inputs_from_paths(
 
     if @read.is_archive_magic(data[:]) {
       let members = @read.read_archive(data, path) catch {
-        _ => raise Elf(@ir.CorruptArchive("failed to parse archive: \{path}"))
+        _ => raise Elf(@ir.CorruptArchive("failed to parse archive \{path}"))
       }
       for entry in members {
         let parsed = @read.parse_object(entry.data, "\{path}:\{entry.name}") catch {
           _ =>
             raise Elf(
               @ir.InvalidObjectType(
-                "failed to parse object from archive: \{path}:\{entry.name}",
+                "failed to parse object from archive \{path}:\{entry.name}",
               ),
             )
         }
@@ -39,7 +39,7 @@ fn load_inputs_from_paths(
       }
     } else {
       let parsed = @read.parse_object(data, path) catch {
-        _ => raise Elf(@ir.InvalidObjectType("failed to parse object: \{path}"))
+        _ => raise Elf(@ir.InvalidObjectType("failed to parse object \{path}"))
       }
       inputs.push(from_parsed_object(parsed))
     }

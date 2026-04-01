@@ -19,7 +19,7 @@ pub fn read_cstring(BytesView, UInt) -> String
 pub fn read_object(String) -> ParsedObject raise
 
 // Errors
-type ElfError
+type ElfError derive(Show)
 
 // Types and methods
 pub struct ArchiveMember {

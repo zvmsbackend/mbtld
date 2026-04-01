@@ -9,7 +9,7 @@ suberror ElfError {
   InvalidSection(String)
   InvalidSymbol(String)
   InvalidRelocation(String)
-}
+} derive(Show)
 
 ///|
 /// Check if bytes start with ELF magic

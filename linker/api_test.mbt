@@ -29,3 +29,23 @@ test "link rejects empty input list" {
   }
   inspect(msg, content="no input files")
 }
+
+///|
+test "link preserves detailed ELF parse error" {
+  let path = "/tmp/mbtld_invalid_object_test.o"
+  @fs.write_bytes_to_file(path, b"not an elf") |> ignore
+
+  let mut msg = ""
+  try {
+    link(mk_opts([path])) |> ignore
+    abort("expected parse failure")
+  } catch {
+    @ir.Elf(@ir.InvalidObjectType(m)) => msg = m
+    _ => abort("unexpected error type")
+  }
+
+  inspect(
+    msg,
+    content="failed to parse object /tmp/mbtld_invalid_object_test.o",
+  )
+}

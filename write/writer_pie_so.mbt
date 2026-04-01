@@ -1423,7 +1423,7 @@ pub fn write_pie_or_shared(
     [] => {
       if ir.input_objects.length() > 1 {
         raise LayoutFailure(
-          "no merged output sections for multi-input \{opts.output_kind.to_string()} build",
+          "no merged output sections for multi-input \{opts.output_kind} build",
         )
       }
       // Keep backward compatibility for minimal single-input flow.
@@ -1435,7 +1435,7 @@ pub fn write_pie_or_shared(
   {
     bytes: payload,
     map_text: Some(
-      "elf64 ET_DYN payload for \{opts.output_kind.to_string()} from \{ir.merged_sections.length()} merged sections",
+      "elf64 ET_DYN payload for \{opts.output_kind} from \{ir.merged_sections.length()} merged sections",
     ),
   }
 }

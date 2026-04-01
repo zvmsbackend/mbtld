@@ -108,3 +108,27 @@ test "build_ir maps relocation target symbol" {
   inspect(ir.pending_relocs[0].patch_off, content="1")
   inspect(ir.pending_relocs[0].target_sym, content="0")
 }
+
+///|
+test "build_ir normalizes and orders output sections" {
+  let obj : @ir.InputObject = {
+    path: "a.o",
+    raw: b"A",
+    arch: X86_64,
+    bitness: ELF64,
+    sections: [
+      bir_mk_section(".rodata.str1.1", b"abc\x00"),
+      bir_mk_section(".text.hot", b"\x90"),
+    ],
+    symbols: [bir_mk_symbol("foo", 1, 0UL), bir_mk_symbol("c1", 0, 0UL)],
+    relocs: [],
+  }
+
+  let ir = build_ir([obj], bir_mk_opts())
+
+  inspect(ir.merged_sections.length(), content="2")
+  inspect(ir.merged_sections[0].output_name, content=".text")
+  inspect(ir.merged_sections[1].output_name, content=".rodata")
+  inspect(ir.merged_symbols[0].output_sec, content="0")
+  inspect(ir.merged_symbols[1].output_sec, content="1")
+}

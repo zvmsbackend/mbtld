@@ -277,7 +277,6 @@ fn collect_paths_from_path(
       continue
     }
     if recursive {
-      // Ignore non-directory children; keep recursion resilient to mixed entries.
       collect_paths_from_path(out, child, suffixes, true) catch {
         @ir.InvalidArgs(_) => ()
         @ir.MissingValue(_) => ()

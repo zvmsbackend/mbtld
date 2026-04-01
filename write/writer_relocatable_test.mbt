@@ -120,6 +120,22 @@ test "write_relocatable emits merged section payload" {
 }
 
 ///|
+test "write_relocatable materializes signature section" {
+  let ir = {
+    ..mk_ir([mk_input("a.o", b"\x7fELF")]),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 1UL, bytes: b"\x90" },
+    ],
+  }
+  let opts = { ..test_opts(), signature: Some("sig-rel-v1") }
+
+  let artifact = write_relocatable(ir, opts)
+  let text = artifact.bytes[:].to_string()
+  inspect(text.contains(".note.mbtld.sig"), content="true")
+  inspect(text.contains("sig-rel-v1"), content="true")
+}
+
+///|
 test "write_relocatable drops debug sections when strip_debug is enabled" {
   let raw = b"\x7fELF"
   let ir = {

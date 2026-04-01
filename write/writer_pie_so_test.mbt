@@ -136,6 +136,22 @@ test "write_pie_or_shared emits merged payload" {
 }
 
 ///|
+test "write_pie_or_shared materializes signature section" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 1UL, bytes: b"\xaa" },
+    ],
+  }
+  let opts = { ..pie_test_opts(SharedLibrary), signature: Some("sig-pie-v1") }
+
+  let artifact = write_pie_or_shared(ir, opts)
+  let text = artifact.bytes[:].to_string()
+  inspect(text.contains(".note.mbtld.sig"), content="true")
+  inspect(text.contains("sig-pie-v1"), content="true")
+}
+
+///|
 test "write_pie_or_shared emits interp for executable pie" {
   let ir = {
     ..pie_mk_ir(b"\x7fELF"),

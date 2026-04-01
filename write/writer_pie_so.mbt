@@ -144,6 +144,16 @@ fn pie_is_debug_section_name(name : String) -> Bool {
 }
 
 ///|
+fn pie_encode_cstring(s : String) -> Bytes {
+  let out : Array[Byte] = []
+  for ch in s {
+    out.push(Char::to_int(ch).to_byte())
+  }
+  out.push(0)
+  Bytes::from_array(out)
+}
+
+///|
 fn pie_write_plt_x86_64(
   file : Array[Byte],
   plt_off : UInt64,
@@ -674,6 +684,18 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
     sections.push({ ..sec, output_index: new_idx })
     section_source_indices.push(i)
     sec_index_map[i] = new_idx
+  }
+
+  if opts.signature is Some(sig) && sig != "" {
+    if sections.search_by(sec => sec.output_name == ".note.mbtld.sig") is None {
+      section_source_indices.push(-1)
+      sections.push({
+        output_name: ".note.mbtld.sig",
+        output_index: sections.length(),
+        align: 1UL,
+        bytes: pie_encode_cstring(sig),
+      })
+    }
   }
 
   let mut has_interp = false

@@ -150,6 +150,42 @@ fn rr_filter_debug_sections(ir : @ir.LinkIr) -> @ir.LinkIr {
 }
 
 ///|
+fn rr_encode_cstring(s : String) -> Bytes {
+  let out : Array[Byte] = []
+  for ch in s {
+    out.push(Char::to_int(ch).to_byte())
+  }
+  out.push(0)
+  Bytes::from_array(out)
+}
+
+///|
+fn rr_attach_signature_section(
+  ir : @ir.LinkIr,
+  signature : String?,
+) -> @ir.LinkIr {
+  match signature {
+    Some(sig) if sig != "" =>
+      if ir.merged_sections.search_by(sec => {
+          sec.output_name == ".note.mbtld.sig"
+        })
+        is Some(_) {
+        ir
+      } else {
+        let merged_sections = ir.merged_sections
+        merged_sections.push({
+          output_name: ".note.mbtld.sig",
+          output_index: merged_sections.length(),
+          align: 1UL,
+          bytes: rr_encode_cstring(sig),
+        })
+        { ..ir, merged_sections, }
+      }
+    _ => ir
+  }
+}
+
+///|
 priv struct RrSymtabBuild {
   symtab : Bytes
   strtab : Bytes
@@ -569,6 +605,7 @@ pub fn write_relocatable(
   } else {
     ir
   }
+  let output_ir = rr_attach_signature_section(output_ir, opts.signature)
 
   if ir.input_objects.length() == 0 {
     raise LayoutFailure("no input object to emit")

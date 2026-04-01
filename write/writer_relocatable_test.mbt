@@ -211,6 +211,70 @@ test "write_relocatable emits symtab and strtab" {
 }
 
 ///|
+test "write_relocatable keeps only relocation-needed symbols when strip_symbols is enabled" {
+  let raw = b"\x7fELF"
+  let ir = {
+    ..mk_ir([mk_input("a.o", raw)]),
+    merged_sections: [
+      {
+        output_name: ".text",
+        output_index: 0,
+        align: 1UL,
+        bytes: b"\x90\x90\x90\x90",
+      },
+    ],
+    merged_symbols: [
+      {
+        name: "used",
+        output_sec: 0,
+        output_value: 0UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+      {
+        name: "unused",
+        output_sec: 0,
+        output_value: 0UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+    pending_relocs: [
+      {
+        out_sec: 0,
+        patch_off: 1UL,
+        rel_type: 2,
+        target_sym: 0,
+        addend: 0,
+        has_addend: true,
+      },
+    ],
+  }
+  let opts = { ..test_opts(), strip_symbols: true }
+
+  let artifact = write_relocatable(ir, opts)
+  let bytes = artifact.bytes
+
+  let e_shoff = rr_read_u64_le(bytes, 40).to_int()
+  let e_shentsize = rr_read_u16_le(bytes, 58).to_int()
+  let e_shnum = rr_read_u16_le(bytes, 60).to_int()
+
+  let mut symtab_size = 0UL
+  for i in 0..<e_shnum {
+    let sh_off = e_shoff + i * e_shentsize
+    let sh_type = rr_read_u32_le(bytes, sh_off + 4)
+    if sh_type == @model.SHT_SYMTAB {
+      symtab_size = rr_read_u64_le(bytes, sh_off + 32)
+    }
+  }
+
+  // NULL symbol + one relocation-needed symbol.
+  inspect(symtab_size, content="48")
+}
+
+///|
 test "write_relocatable emits rela section with symtab link" {
   let raw = b"\x7fELF"
   let ir = {

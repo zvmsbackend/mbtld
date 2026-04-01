@@ -207,18 +207,33 @@ fn rr_append_cstr_with_offset(arr : Array[Byte], s : String) -> UInt {
 }
 
 ///|
-fn rr_build_symtab_and_strtab(ir : @ir.LinkIr) -> RrSymtabBuild {
+fn rr_build_symtab_and_strtab(
+  ir : @ir.LinkIr,
+  strip_symbols : Bool,
+) -> RrSymtabBuild {
+  let keep_symbols = [true].repeat(ir.merged_symbols.length())
+  if strip_symbols {
+    for i in 0..<keep_symbols.length() {
+      keep_symbols[i] = false
+    }
+    for reloc in ir.pending_relocs {
+      if reloc.target_sym >= 0 && reloc.target_sym < keep_symbols.length() {
+        keep_symbols[reloc.target_sym] = true
+      }
+    }
+  }
+
   let ordered : Array[(Int, @ir.MergedSymbol)] = []
   let sym_index_map = [0].repeat(ir.merged_symbols.length())
   let mut local_count = 0
   for i, sym in ir.merged_symbols {
-    if sym.binding is Local {
+    if sym.binding is Local && keep_symbols[i] {
       ordered.push((i, sym))
       local_count += 1
     }
   }
   for i, sym in ir.merged_symbols {
-    if !(sym.binding is Local) {
+    if !(sym.binding is Local) && keep_symbols[i] {
       ordered.push((i, sym))
     }
   }
@@ -325,8 +340,8 @@ fn rr_build_reloc_sections(
 }
 
 ///|
-fn rr_build_elf64_relocatable(ir : @ir.LinkIr) -> Bytes {
-  let sym_build = rr_build_symtab_and_strtab(ir)
+fn rr_build_elf64_relocatable(ir : @ir.LinkIr, strip_symbols : Bool) -> Bytes {
+  let sym_build = rr_build_symtab_and_strtab(ir, strip_symbols)
   let reloc_sections = rr_build_reloc_sections(ir, sym_build.sym_index_map)
   let section_names : Array[String] = ir.merged_sections.map(sec => {
     sec.output_name
@@ -572,12 +587,12 @@ pub fn write_relocatable(
     }
   }
 
-  let payload = rr_build_elf64_relocatable(output_ir)
+  let payload = rr_build_elf64_relocatable(output_ir, opts.strip_symbols)
 
   {
     bytes: payload,
     map_text: Some(
-      "relocatable payload from \{output_ir.merged_sections.length()} sections, align=\{opts.section_align}, strip_debug=\{opts.strip_debug}",
+      "relocatable payload from \{output_ir.merged_sections.length()} sections, align=\{opts.section_align}, strip_debug=\{opts.strip_debug}, strip_symbols=\{opts.strip_symbols}",
     ),
   }
 }

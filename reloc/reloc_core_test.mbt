@@ -55,6 +55,33 @@ fn rc_ir(arch : @ir.Arch) -> @ir.LinkIr {
 }
 
 ///|
+fn rc_ir_with(arch : @ir.Arch, rel_type : UInt) -> @ir.LinkIr {
+  {
+    ..rc_ir(arch),
+    merged_symbols: [
+      {
+        name: "foo",
+        output_sec: 0,
+        output_value: 1UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+    pending_relocs: [
+      {
+        out_sec: 0,
+        patch_off: 0UL,
+        rel_type,
+        target_sym: 0,
+        addend: 0,
+        has_addend: true,
+      },
+    ],
+  }
+}
+
+///|
 test "apply_relocations skips patching for relocatable output" {
   let ir = rc_ir(X86_64)
   let out = apply_relocations(ir, rc_opts(Relocatable))
@@ -62,12 +89,22 @@ test "apply_relocations skips patching for relocatable output" {
 }
 
 ///|
-test "apply_relocations fails fast for non-x86_64 patch path" {
-  let ir = rc_ir(AARCH64)
-  let mut ok = false
-  ignore(apply_relocations(ir, rc_opts(ExecutablePie))) catch {
-    UnsupportedRelocType(_) => ok = true
-    _ => abort("unexpected reloc error type")
-  }
-  assert_true(ok)
+test "apply_relocations patches AARCH64 ABS32 for executable output" {
+  let ir = rc_ir_with(AARCH64, 258)
+  let out = apply_relocations(ir, rc_opts(ExecutablePie))
+  inspect(out.merged_sections[0].bytes, content="b\"\\x01\\x00\\x00\\x00\"")
+}
+
+///|
+test "apply_relocations patches RISCV64 32-bit relocation" {
+  let ir = rc_ir_with(RISCV64, 1)
+  let out = apply_relocations(ir, rc_opts(ExecutablePie))
+  inspect(out.merged_sections[0].bytes, content="b\"\\x01\\x00\\x00\\x00\"")
+}
+
+///|
+test "apply_relocations patches LOONGARCH64 32-bit relocation" {
+  let ir = rc_ir_with(LOONGARCH64, 1)
+  let out = apply_relocations(ir, rc_opts(ExecutablePie))
+  inspect(out.merged_sections[0].bytes, content="b\"\\x01\\x00\\x00\\x00\"")
 }

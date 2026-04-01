@@ -101,11 +101,53 @@ pub fn merge_sections(
 }
 
 ///|
+/// Convert resolve error to structured diagnostic
+pub fn to_structured_diagnostic(
+  err : @ir.ResolveError,
+  file? : String,
+  section? : String,
+  symbol? : String,
+) -> Diagnostic {
+  match err {
+    UndefinedSymbol(name) => {
+      let sym = match symbol {
+        Some(s) => Some(s)
+        None => Some(name)
+      }
+      error_at(
+        "RESOLVE_UNDEFINED_SYMBOL",
+        "undefined symbol: \{name}",
+        file?=file,
+        section?=section,
+        symbol?=sym,
+      )
+    }
+    MultipleDefinition(name) => {
+      let sym = match symbol {
+        Some(s) => Some(s)
+        None => Some(name)
+      }
+      error_at(
+        "RESOLVE_MULTIPLE_DEFINITION",
+        "multiple definition: \{name}",
+        file?=file,
+        section?=section,
+        symbol?=sym,
+      )
+    }
+    SectionConflict(msg) =>
+      error_at(
+        "RESOLVE_SECTION_CONFLICT",
+        "section conflict: \{msg}",
+        file?=file,
+        section?=section,
+        symbol?=symbol,
+      )
+  }
+}
+
+///|
 /// Convert error to diagnostic message
 pub fn to_diagnostic(err : @ir.ResolveError) -> String {
-  match err {
-    UndefinedSymbol(name) => "undefined symbol: \{name}"
-    MultipleDefinition(name) => "multiple definition: \{name}"
-    SectionConflict(msg) => "section conflict: \{msg}"
-  }
+  to_structured_diagnostic(err).message
 }

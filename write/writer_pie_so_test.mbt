@@ -476,6 +476,61 @@ test "write_pie_or_shared fallback skips data main symbol" {
 }
 
 ///|
+test "write_pie_or_shared requires executable entry symbol for EFI output" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 1UL, bytes: b"\x90\xC3" },
+    ],
+    merged_symbols: [],
+  }
+
+  let mut msg = ""
+  try {
+    ignore(write_pie_or_shared(ir, pie_test_opts(EfiApplication)))
+    abort("expected writer error")
+  } catch {
+    LayoutFailure(m) => msg = m
+    _ => abort("unexpected writer error type")
+  }
+
+  inspect(
+    msg,
+    content="EFI output requires an executable entry symbol (efi_main/_start/main or --entry-point)",
+  )
+}
+
+///|
+test "write_pie_or_shared uses efi_main fallback for EFI output" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      {
+        output_name: ".text",
+        output_index: 0,
+        align: 1UL,
+        bytes: b"\x90\xC3",
+      },
+    ],
+    merged_symbols: [
+      {
+        name: "efi_main",
+        output_sec: 0,
+        output_value: 0UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+  }
+
+  let artifact = write_pie_or_shared(ir, pie_test_opts(EfiApplication))
+
+  // data_start is fixed at ELF64_EHDR_SIZE + 4 * ELF64_PHDR_SIZE = 0x120.
+  inspect(pie_read_u64_le(artifact.bytes, 24), content="288")
+}
+
+///|
 test "write_pie_or_shared emits minimal dynamic metadata" {
   let ir = {
     ..pie_mk_ir(b"\x7fELF"),

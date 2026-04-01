@@ -659,13 +659,7 @@ fn pie_resolve_entry_addr(
   opts : @ir.LinkOptions,
   section_addrs : Array[UInt64],
 ) -> UInt64 {
-  let entry_candidates : Array[String] = if opts.entry != "" {
-    [opts.entry]
-  } else if opts.output_kind is @ir.ExecutablePie {
-    ["_start", "main"]
-  } else {
-    []
-  }
+  let entry_candidates = pie_entry_candidates(opts)
 
   for name in entry_candidates {
     let found = ir.merged_symbols.iter().find_first(sym => sym.name == name)
@@ -683,6 +677,47 @@ fn pie_resolve_entry_addr(
   }
 
   0UL
+}
+
+///|
+fn pie_is_efi_output(kind : @ir.OutputKind) -> Bool {
+  kind is (@ir.EfiApplication | @ir.EfiBootDriver | @ir.EfiRuntimeDriver)
+}
+
+///|
+fn pie_entry_candidates(opts : @ir.LinkOptions) -> Array[String] {
+  if opts.entry != "" {
+    [opts.entry]
+  } else if opts.output_kind is @ir.ExecutablePie {
+    ["_start", "main"]
+  } else if pie_is_efi_output(opts.output_kind) {
+    ["efi_main", "_start", "main"]
+  } else {
+    []
+  }
+}
+
+///|
+fn pie_has_resolvable_entry_symbol(
+  ir : @ir.LinkIr,
+  opts : @ir.LinkOptions,
+) -> Bool {
+  let entry_candidates = pie_entry_candidates(opts)
+  for name in entry_candidates {
+    let found = ir.merged_symbols.iter().find_first(sym => sym.name == name)
+    if found is Some(sym) {
+      if sym.output_sec >= 0 && sym.output_sec < ir.merged_sections.length() {
+        let sec_name = ir.merged_sections[sym.output_sec].output_name
+        let sec_flags = pie_infer_sh_flags(sec_name)
+        let is_exec_sec = (sec_flags & @model.SHF_EXECINSTR) != 0UL
+        let is_func_sym = sym.ty is @ir.Func
+        if is_func_sym || is_exec_sec {
+          return true
+        }
+      }
+    }
+  }
+  false
 }
 
 ///|
@@ -1518,6 +1553,13 @@ pub fn write_pie_or_shared(
   }
   if ir.input_objects.length() == 0 {
     raise LayoutFailure("no input object to emit")
+  }
+
+  if pie_is_efi_output(opts.output_kind) &&
+    !pie_has_resolvable_entry_symbol(ir, opts) {
+    raise LayoutFailure(
+      "EFI output requires an executable entry symbol (efi_main/_start/main or --entry-point)",
+    )
   }
 
   let payload = match ir.merged_sections {

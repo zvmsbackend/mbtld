@@ -121,3 +121,23 @@ test "resolve_symbols accepts executable entry symbol" {
   let out = resolve_symbols(ir, rs_opts(ExecutablePie, "main"))
   inspect(out.merged_symbols.length(), content="1")
 }
+
+///|
+test "to_structured_diagnostic maps undefined symbol to stable code" {
+  let diag = to_structured_diagnostic(UndefinedSymbol("foo"))
+  inspect(diag.code, content="RESOLVE_UNDEFINED_SYMBOL")
+  inspect(diag.message, content="undefined symbol: foo")
+  inspect(diag.symbol, content="Some(\"foo\")")
+}
+
+///|
+test "to_structured_diagnostic keeps explicit symbol override" {
+  let diag = to_structured_diagnostic(
+    MultipleDefinition("foo"),
+    file="a.o",
+    symbol="bar",
+  )
+  inspect(diag.code, content="RESOLVE_MULTIPLE_DEFINITION")
+  inspect(diag.file, content="Some(\"a.o\")")
+  inspect(diag.symbol, content="Some(\"bar\")")
+}

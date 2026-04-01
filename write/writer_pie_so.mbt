@@ -1420,15 +1420,10 @@ pub fn write_pie_or_shared(
   }
 
   let payload = match ir.merged_sections {
-    [] => {
-      if ir.input_objects.length() > 1 {
-        raise LayoutFailure(
-          "no merged output sections for multi-input \{opts.output_kind} build",
-        )
-      }
-      // Keep backward compatibility for minimal single-input flow.
-      ir.input_objects[0].raw
-    }
+    [] =>
+      raise LayoutFailure(
+        "no merged output sections for \{opts.output_kind} build",
+      )
     [_, ..] => pie_build_elf64_dyn(ir, opts)
   }
 

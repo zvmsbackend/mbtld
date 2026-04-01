@@ -575,16 +575,7 @@ pub fn write_relocatable(
   }
 
   if output_ir.merged_sections.length() == 0 {
-    if ir.input_objects.length() > 1 {
-      raise LayoutFailure(
-        "no merged output sections for multi-input relocatable build",
-      )
-    }
-    // Keep backward compatibility for minimal single-input flow.
-    return {
-      bytes: ir.input_objects[0].raw,
-      map_text: Some("mvp: passthrough relocatable output"),
-    }
+    raise LayoutFailure("no merged output sections for relocatable build")
   }
 
   let payload = rr_build_elf64_relocatable(output_ir, opts.strip_symbols)

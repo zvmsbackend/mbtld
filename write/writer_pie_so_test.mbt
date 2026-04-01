@@ -91,6 +91,21 @@ test "write_pie_or_shared rejects relocatable kind" {
 }
 
 ///|
+test "write_pie_or_shared fails when merged sections are absent" {
+  let mut msg = ""
+  try {
+    ignore(
+      write_pie_or_shared(pie_mk_ir(b"\x7fELF"), pie_test_opts(SharedLibrary)),
+    )
+    abort("expected writer error")
+  } catch {
+    LayoutFailure(m) => msg = m
+    _ => abort("unexpected writer error type")
+  }
+  inspect(msg, content="no merged output sections for SharedLibrary build")
+}
+
+///|
 test "write_pie_or_shared emits merged payload" {
   let ir = {
     ..pie_mk_ir(b"\x7fELF"),
@@ -1939,8 +1954,5 @@ test "write_pie_or_shared fails on multi-input without merged sections" {
     LayoutFailure(m) => msg = m
     _ => abort("unexpected writer error type")
   }
-  inspect(
-    msg,
-    content="no merged output sections for multi-input SharedLibrary build",
-  )
+  inspect(msg, content="no merged output sections for SharedLibrary build")
 }

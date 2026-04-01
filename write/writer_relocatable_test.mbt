@@ -68,11 +68,17 @@ fn rr_read_u64_le(bytes : Bytes, off : Int) -> UInt64 {
 }
 
 ///|
-test "write_relocatable passthrough one object" {
-  let raw = b"\x7fELF\x02\x01\x01\x00"
-  let ir = mk_ir([mk_input("a.o", raw)])
-  let artifact = write_relocatable(ir, test_opts())
-  inspect(artifact.bytes, content="b\"\\x7fELF\\x02\\x01\\x01\\x00\"")
+test "write_relocatable fails when merged sections are absent" {
+  let ir = mk_ir([mk_input("a.o", b"\x7fELF\x02\x01\x01\x00")])
+  let mut msg = ""
+  try {
+    ignore(write_relocatable(ir, test_opts()))
+    abort("expected writer error")
+  } catch {
+    LayoutFailure(m) => msg = m
+    _ => abort("unexpected writer error type")
+  }
+  inspect(msg, content="no merged output sections for relocatable build")
 }
 
 ///|
@@ -445,8 +451,5 @@ test "write_relocatable fails on multi-input without merged sections" {
     LayoutFailure(m) => msg = m
     _ => abort("unexpected writer error type")
   }
-  inspect(
-    msg,
-    content="no merged output sections for multi-input relocatable build",
-  )
+  inspect(msg, content="no merged output sections for relocatable build")
 }

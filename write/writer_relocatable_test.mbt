@@ -74,6 +74,69 @@ fn rr_read_u64_le(bytes : Bytes, off : Int) -> UInt64 {
 }
 
 ///|
+fn rr_read_cstring(bytes : Bytes, off : Int) -> String {
+  let buf = StringBuilder::new()
+  for i in off..<bytes.length() {
+    let b = bytes[i]
+    if b == 0 {
+      break
+    }
+    buf.write_char(b.to_char())
+  }
+  buf.to_string()
+}
+
+///|
+fn rr_section_type_by_name(bytes : Bytes, name : String) -> UInt? {
+  let e_shoff = rr_read_u64_le(bytes, 40).to_int()
+  let e_shentsize = rr_read_u16_le(bytes, 58).to_int()
+  let e_shnum = rr_read_u16_le(bytes, 60).to_int()
+  let e_shstrndx = rr_read_u16_le(bytes, 62).to_int()
+
+  if e_shstrndx <= 0 || e_shstrndx >= e_shnum {
+    return None
+  }
+
+  let shstr_hdr_off = e_shoff + e_shstrndx * e_shentsize
+  let shstr_off = rr_read_u64_le(bytes, shstr_hdr_off + 24).to_int()
+
+  for i in 0..<e_shnum {
+    let sh_off = e_shoff + i * e_shentsize
+    let sh_name_off = rr_read_u32_le(bytes, sh_off).reinterpret_as_int()
+    let sec_name = rr_read_cstring(bytes, shstr_off + sh_name_off)
+    if sec_name == name {
+      return Some(rr_read_u32_le(bytes, sh_off + 4))
+    }
+  }
+  None
+}
+
+///|
+fn rr_section_addralign_by_name(bytes : Bytes, name : String) -> UInt64? {
+  let e_shoff = rr_read_u64_le(bytes, 40).to_int()
+  let e_shentsize = rr_read_u16_le(bytes, 58).to_int()
+  let e_shnum = rr_read_u16_le(bytes, 60).to_int()
+  let e_shstrndx = rr_read_u16_le(bytes, 62).to_int()
+
+  if e_shstrndx <= 0 || e_shstrndx >= e_shnum {
+    return None
+  }
+
+  let shstr_hdr_off = e_shoff + e_shstrndx * e_shentsize
+  let shstr_off = rr_read_u64_le(bytes, shstr_hdr_off + 24).to_int()
+
+  for i in 0..<e_shnum {
+    let sh_off = e_shoff + i * e_shentsize
+    let sh_name_off = rr_read_u32_le(bytes, sh_off).reinterpret_as_int()
+    let sec_name = rr_read_cstring(bytes, shstr_off + sh_name_off)
+    if sec_name == name {
+      return Some(rr_read_u64_le(bytes, sh_off + 48))
+    }
+  }
+  None
+}
+
+///|
 test "write_relocatable fails when merged sections are absent" {
   let ir = mk_ir([mk_input("a.o", b"\x7fELF\x02\x01\x01\x00")])
   let mut msg = ""
@@ -133,6 +196,57 @@ test "write_relocatable materializes signature section" {
   let text = artifact.bytes[:].to_string()
   inspect(text.contains(".note.mbtld.sig"), content="true")
   inspect(text.contains("sig-rel-v1"), content="true")
+  inspect(
+    rr_section_type_by_name(artifact.bytes, ".note.mbtld.sig"),
+    content="Some(7)",
+  )
+}
+
+///|
+test "write_relocatable applies linker block size to section alignment" {
+  let ir = {
+    ..mk_ir([mk_input("a.o", b"\x7fELF")]),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 1UL, bytes: b"\x90" },
+    ],
+  }
+  let opts = {
+    ..test_opts(),
+    linker_heap_no_smart: true,
+    linker_block_size: Some(64UL),
+  }
+
+  let artifact = write_relocatable(ir, opts)
+  inspect(
+    rr_section_addralign_by_name(artifact.bytes, ".text"),
+    content="Some(64)",
+  )
+}
+
+///|
+test "write_relocatable enforces linker heap size limit" {
+  let ir = {
+    ..mk_ir([mk_input("a.o", b"\x7fELF")]),
+    merged_sections: [
+      {
+        output_name: ".text",
+        output_index: 0,
+        align: 1UL,
+        bytes: b"\x01\x02\x03\x04\x05\x06\x07\x08",
+      },
+    ],
+  }
+  let opts = { ..test_opts(), linker_heap_size: Some(32UL) }
+
+  let mut msg = ""
+  try {
+    ignore(write_relocatable(ir, opts))
+    abort("expected writer error")
+  } catch {
+    LayoutFailure(m) => msg = m
+    _ => abort("unexpected writer error type")
+  }
+  inspect(msg.contains("output exceeds linker heap size"), content="true")
 }
 
 ///|

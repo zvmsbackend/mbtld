@@ -21,18 +21,22 @@ fn pie_machine_from_arch(arch : @ir.Arch) -> UInt16 {
 
 ///|
 fn pie_infer_sh_type(name : String) -> UInt {
-  match name {
-    ".dynamic" => @model.SHT_DYNAMIC
-    ".hash" => @model.SHT_HASH
-    ".rela.dyn" => @model.SHT_RELA
-    ".rela.plt" => @model.SHT_RELA
-    ".dynsym" => @model.SHT_DYNSYM
-    ".dynstr" => @model.SHT_STRTAB
-    ".bss" | ".tbss" => @model.SHT_NOBITS
-    ".init_array" => @model.SHT_INIT_ARRAY
-    ".fini_array" => @model.SHT_FINI_ARRAY
-    ".preinit_array" => @model.SHT_PREINIT_ARRAY
-    _ => @model.SHT_PROGBITS
+  if name.has_prefix(".note") {
+    @model.SHT_NOTE
+  } else {
+    match name {
+      ".dynamic" => @model.SHT_DYNAMIC
+      ".hash" => @model.SHT_HASH
+      ".rela.dyn" => @model.SHT_RELA
+      ".rela.plt" => @model.SHT_RELA
+      ".dynsym" => @model.SHT_DYNSYM
+      ".dynstr" => @model.SHT_STRTAB
+      ".bss" | ".tbss" => @model.SHT_NOBITS
+      ".init_array" => @model.SHT_INIT_ARRAY
+      ".fini_array" => @model.SHT_FINI_ARRAY
+      ".preinit_array" => @model.SHT_PREINIT_ARRAY
+      _ => @model.SHT_PROGBITS
+    }
   }
 }
 
@@ -129,11 +133,56 @@ fn pie_write_i32_le(out : Array[Byte], offset : Int, v : Int) -> Unit {
 
 ///|
 fn pie_program_align(opts : @ir.LinkOptions) -> UInt64 {
-  if opts.section_align == 0 {
+  let sec_align = if opts.section_align == 0 {
     0x1000UL
   } else {
     opts.section_align.to_uint64()
   }
+  let block_align = pie_effective_block_align(opts)
+  if block_align > sec_align {
+    block_align
+  } else {
+    sec_align
+  }
+}
+
+///|
+fn pie_pow2_u64(power : UInt) -> UInt64 {
+  let mut v = 1UL
+  for _ in 0..<power.reinterpret_as_int() {
+    v = v << 1
+  }
+  v
+}
+
+///|
+fn pie_effective_block_align(opts : @ir.LinkOptions) -> UInt64 {
+  let mut align = match opts.linker_block_size {
+    Some(size) if size > 0UL => size
+    _ =>
+      match opts.linker_block_power {
+        Some(power) if power > 0 => pie_pow2_u64(power)
+        _ => 0UL
+      }
+  }
+
+  if align > 0UL {
+    if opts.linker_block_level is Some(level) && level > 1 {
+      align = align * level.to_uint64()
+    }
+    if !opts.linker_heap_no_smart {
+      let sec_align = if opts.section_align == 0 {
+        1UL
+      } else {
+        opts.section_align.to_uint64()
+      }
+      if sec_align > align {
+        align = sec_align
+      }
+    }
+  }
+
+  align
 }
 
 ///|
@@ -144,12 +193,36 @@ fn pie_is_debug_section_name(name : String) -> Bool {
 }
 
 ///|
-fn pie_encode_cstring(s : String) -> Bytes {
+fn pie_align4_len(len : Int) -> Int {
+  (len + 3) / 4 * 4
+}
+
+///|
+fn pie_build_signature_note(desc : String) -> Bytes {
+  let name = "mbtld"
+  let name_len = name.length() + 1
+  let desc_len = desc.length()
+
   let out : Array[Byte] = []
-  for ch in s {
+  pie_push_u32_le(out, name_len.reinterpret_as_uint())
+  pie_push_u32_le(out, desc_len.reinterpret_as_uint())
+  pie_push_u32_le(out, 1)
+
+  for ch in name {
     out.push(Char::to_int(ch).to_byte())
   }
   out.push(0)
+  for _ in name_len..<pie_align4_len(name_len) {
+    out.push(0)
+  }
+
+  for ch in desc {
+    out.push(Char::to_int(ch).to_byte())
+  }
+  for _ in desc_len..<pie_align4_len(desc_len) {
+    out.push(0)
+  }
+
   Bytes::from_array(out)
 }
 
@@ -676,12 +749,18 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   let sections : Array[@ir.MergedSection] = []
   let section_source_indices : Array[Int] = []
   let sec_index_map = [-1].repeat(ir.merged_sections.length())
+  let block_align = pie_effective_block_align(opts)
   for i, sec in ir.merged_sections {
     if opts.strip_debug && pie_is_debug_section_name(sec.output_name) {
       continue
     }
     let new_idx = sections.length()
-    sections.push({ ..sec, output_index: new_idx })
+    let align = if block_align > 0UL && sec.align < block_align {
+      block_align
+    } else {
+      sec.align
+    }
+    sections.push({ ..sec, output_index: new_idx, align })
     section_source_indices.push(i)
     sec_index_map[i] = new_idx
   }
@@ -692,8 +771,8 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
       sections.push({
         output_name: ".note.mbtld.sig",
         output_index: sections.length(),
-        align: 1UL,
-        bytes: pie_encode_cstring(sig),
+        align: 4UL,
+        bytes: pie_build_signature_note(sig),
       })
     }
   }
@@ -1447,6 +1526,13 @@ pub fn write_pie_or_shared(
         "no merged output sections for \{opts.output_kind} build",
       )
     [_, ..] => pie_build_elf64_dyn(ir, opts)
+  }
+
+  if opts.linker_heap_size is Some(limit) &&
+    payload.length().to_uint64() > limit {
+    raise LayoutFailure(
+      "output exceeds linker heap size: payload=\{payload.length()} limit=\{limit}",
+    )
   }
 
   {

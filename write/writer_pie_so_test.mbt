@@ -82,6 +82,44 @@ fn pie_read_u32_le(bytes : Bytes, off : Int) -> UInt {
 }
 
 ///|
+fn pie_read_cstring(bytes : Bytes, off : Int) -> String {
+  let buf = StringBuilder::new()
+  for i in off..<bytes.length() {
+    let b = bytes[i]
+    if b == 0 {
+      break
+    }
+    buf.write_char(b.to_char())
+  }
+  buf.to_string()
+}
+
+///|
+fn pie_section_type_by_name(bytes : Bytes, name : String) -> UInt? {
+  let e_shoff = pie_read_u64_le(bytes, 40).to_int()
+  let e_shentsize = pie_read_u16_le(bytes, 58).to_int()
+  let e_shnum = pie_read_u16_le(bytes, 60).to_int()
+  let e_shstrndx = pie_read_u16_le(bytes, 62).to_int()
+
+  if e_shstrndx <= 0 || e_shstrndx >= e_shnum {
+    return None
+  }
+
+  let shstr_hdr_off = e_shoff + e_shstrndx * e_shentsize
+  let shstr_off = pie_read_u64_le(bytes, shstr_hdr_off + 24).to_int()
+
+  for i in 0..<e_shnum {
+    let sh_off = e_shoff + i * e_shentsize
+    let sh_name_off = pie_read_u32_le(bytes, sh_off).reinterpret_as_int()
+    let sec_name = pie_read_cstring(bytes, shstr_off + sh_name_off)
+    if sec_name == name {
+      return Some(pie_read_u32_le(bytes, sh_off + 4))
+    }
+  }
+  None
+}
+
+///|
 test "write_pie_or_shared rejects relocatable kind" {
   let mut msg = ""
   try {
@@ -149,6 +187,10 @@ test "write_pie_or_shared materializes signature section" {
   let text = artifact.bytes[:].to_string()
   inspect(text.contains(".note.mbtld.sig"), content="true")
   inspect(text.contains("sig-pie-v1"), content="true")
+  inspect(
+    pie_section_type_by_name(artifact.bytes, ".note.mbtld.sig"),
+    content="Some(7)",
+  )
 }
 
 ///|
@@ -336,6 +378,52 @@ test "write_pie_or_shared uses section_align for PT_LOAD alignment" {
 
   // First PHDR is PT_LOAD for RX segment in this minimal input.
   inspect(pie_read_u64_le(artifact.bytes, 112), content="65536")
+}
+
+///|
+test "write_pie_or_shared applies linker block size to PT_LOAD alignment" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 1UL, bytes: b"\xAA" },
+    ],
+  }
+  let opts = {
+    ..pie_test_opts(ExecutablePie),
+    linker_heap_no_smart: true,
+    linker_block_size: Some(8192UL),
+  }
+
+  let artifact = write_pie_or_shared(ir, opts)
+
+  // First PHDR is PT_LOAD for RX segment in this minimal input.
+  inspect(pie_read_u64_le(artifact.bytes, 112), content="8192")
+}
+
+///|
+test "write_pie_or_shared enforces linker heap size limit" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      {
+        output_name: ".text",
+        output_index: 0,
+        align: 1UL,
+        bytes: b"\x01\x02\x03\x04\x05\x06\x07\x08",
+      },
+    ],
+  }
+  let opts = { ..pie_test_opts(SharedLibrary), linker_heap_size: Some(64UL) }
+
+  let mut msg = ""
+  try {
+    ignore(write_pie_or_shared(ir, opts))
+    abort("expected writer error")
+  } catch {
+    LayoutFailure(m) => msg = m
+    _ => abort("unexpected writer error type")
+  }
+  inspect(msg.contains("output exceeds linker heap size"), content="true")
 }
 
 ///|

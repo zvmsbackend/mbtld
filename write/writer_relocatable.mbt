@@ -10,6 +10,59 @@ fn rr_align_up_int(value : Int, align : UInt64) -> Int {
 }
 
 ///|
+fn rr_pow2_u64(power : UInt) -> UInt64 {
+  let mut v = 1UL
+  for _ in 0..<power.reinterpret_as_int() {
+    v = v << 1
+  }
+  v
+}
+
+///|
+fn rr_effective_block_align(opts : @ir.LinkOptions) -> UInt64 {
+  let mut align = match opts.linker_block_size {
+    Some(size) if size > 0UL => size
+    _ =>
+      match opts.linker_block_power {
+        Some(power) if power > 0 => rr_pow2_u64(power)
+        _ => 0UL
+      }
+  }
+
+  if align > 0UL {
+    if opts.linker_block_level is Some(level) && level > 1 {
+      align = align * level.to_uint64()
+    }
+    if !opts.linker_heap_no_smart {
+      let sec_align = if opts.section_align == 0 {
+        1UL
+      } else {
+        opts.section_align.to_uint64()
+      }
+      if sec_align > align {
+        align = sec_align
+      }
+    }
+  }
+
+  align
+}
+
+///|
+fn rr_apply_block_align(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> @ir.LinkIr {
+  let block_align = rr_effective_block_align(opts)
+  if block_align == 0UL {
+    return ir
+  }
+
+  let merged_sections = ir.merged_sections.map(sec => {
+    let align = if sec.align < block_align { block_align } else { sec.align }
+    { ..sec, align, }
+  })
+  { ..ir, merged_sections, }
+}
+
+///|
 fn rr_machine_from_arch(arch : @ir.Arch) -> UInt16 {
   match arch {
     X86_64 => @model.EM_X86_64
@@ -21,12 +74,16 @@ fn rr_machine_from_arch(arch : @ir.Arch) -> UInt16 {
 
 ///|
 fn rr_infer_sh_type(name : String) -> UInt {
-  match name {
-    ".bss" | ".tbss" => @model.SHT_NOBITS
-    ".init_array" => @model.SHT_INIT_ARRAY
-    ".fini_array" => @model.SHT_FINI_ARRAY
-    ".preinit_array" => @model.SHT_PREINIT_ARRAY
-    _ => @model.SHT_PROGBITS
+  if name.has_prefix(".note") {
+    @model.SHT_NOTE
+  } else {
+    match name {
+      ".bss" | ".tbss" => @model.SHT_NOBITS
+      ".init_array" => @model.SHT_INIT_ARRAY
+      ".fini_array" => @model.SHT_FINI_ARRAY
+      ".preinit_array" => @model.SHT_PREINIT_ARRAY
+      _ => @model.SHT_PROGBITS
+    }
   }
 }
 
@@ -150,12 +207,36 @@ fn rr_filter_debug_sections(ir : @ir.LinkIr) -> @ir.LinkIr {
 }
 
 ///|
-fn rr_encode_cstring(s : String) -> Bytes {
+fn rr_align4_len(len : Int) -> Int {
+  (len + 3) / 4 * 4
+}
+
+///|
+fn rr_build_signature_note(desc : String) -> Bytes {
+  let name = "mbtld"
+  let name_len = name.length() + 1
+  let desc_len = desc.length()
+
   let out : Array[Byte] = []
-  for ch in s {
+  rr_push_u32_le(out, name_len.reinterpret_as_uint())
+  rr_push_u32_le(out, desc_len.reinterpret_as_uint())
+  rr_push_u32_le(out, 1)
+
+  for ch in name {
     out.push(Char::to_int(ch).to_byte())
   }
   out.push(0)
+  for _ in name_len..<rr_align4_len(name_len) {
+    out.push(0)
+  }
+
+  for ch in desc {
+    out.push(Char::to_int(ch).to_byte())
+  }
+  for _ in desc_len..<rr_align4_len(desc_len) {
+    out.push(0)
+  }
+
   Bytes::from_array(out)
 }
 
@@ -176,8 +257,8 @@ fn rr_attach_signature_section(
         merged_sections.push({
           output_name: ".note.mbtld.sig",
           output_index: merged_sections.length(),
-          align: 1UL,
-          bytes: rr_encode_cstring(sig),
+          align: 4UL,
+          bytes: rr_build_signature_note(sig),
         })
         { ..ir, merged_sections, }
       }
@@ -605,6 +686,7 @@ pub fn write_relocatable(
   } else {
     ir
   }
+  let output_ir = rr_apply_block_align(output_ir, opts)
   let output_ir = rr_attach_signature_section(output_ir, opts.signature)
 
   if ir.input_objects.length() == 0 {
@@ -616,6 +698,13 @@ pub fn write_relocatable(
   }
 
   let payload = rr_build_elf64_relocatable(output_ir, opts.strip_symbols)
+
+  if opts.linker_heap_size is Some(limit) &&
+    payload.length().to_uint64() > limit {
+    raise LayoutFailure(
+      "output exceeds linker heap size: payload=\{payload.length()} limit=\{limit}",
+    )
+  }
 
   {
     bytes: payload,

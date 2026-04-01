@@ -126,6 +126,11 @@ fn linker_command() -> @argparse.Command {
         about="Include dynamic library name (repeatable)",
       ),
       @argparse.OptionArg::new(
+        "input-file",
+        long="input",
+        about="Include one input object/archive file (repeatable)",
+      ),
+      @argparse.OptionArg::new(
         "input-path",
         long="input-path",
         about="Include input files from a directory (*.o, *.a, *.ar)",
@@ -184,8 +189,9 @@ fn linker_command() -> @argparse.Command {
 ///|
 /// Parse command line arguments into LinkOptions
 pub fn parse_args(args : Array[String]) -> @ir.LinkOptions raise @ir.CliError {
+  let pre = preprocess_input_options(args)
   let cmd = linker_command()
-  let matches = cmd.parse(argv=args) catch {
+  let matches = cmd.parse(argv=pre.filtered_args) catch {
     e => raise @ir.CliError::InvalidArgs(e.to_string())
   }
 
@@ -230,6 +236,9 @@ pub fn parse_args(args : Array[String]) -> @ir.LinkOptions raise @ir.CliError {
   )
 
   let input_files : Array[String] = []
+  for input in pre.input_files {
+    append_unique(input_files, input)
+  }
   for input in matches.values.get("inputs") {
     input_files.append(input)
   }
@@ -286,6 +295,38 @@ pub fn parse_args(args : Array[String]) -> @ir.LinkOptions raise @ir.CliError {
     start_address,
     verbose: matches.flags.contains("verbose"),
   }
+}
+
+///|
+priv struct InputPreprocessResult {
+  filtered_args : Array[String]
+  input_files : Array[String]
+}
+
+///|
+fn preprocess_input_options(
+  args : Array[String],
+) -> InputPreprocessResult raise @ir.CliError {
+  let filtered : Array[String] = []
+  let inputs : Array[String] = []
+
+  let mut i = 0
+  while i < args.length() {
+    let arg = args[i]
+    if arg == "--input" {
+      if i + 1 >= args.length() {
+        raise @ir.CliError::InvalidArgs("missing value for --input")
+      }
+      append_unique(inputs, args[i + 1])
+      i += 2
+      continue
+    }
+
+    filtered.push(arg)
+    i += 1
+  }
+
+  { filtered_args: filtered, input_files: inputs }
 }
 
 ///|

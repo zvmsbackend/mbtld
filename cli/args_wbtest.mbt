@@ -55,3 +55,13 @@ test "parse_args accepts pasld alias option for dynamic linker path" {
 
   inspect(opts.dynamic_linker, content="Some(\"/lib64/ld.so\")")
 }
+
+///|
+test "parse_args accepts repeated --input option" {
+  let opts = parse_args([
+    "mbtld", "-o", "out.o", "--input", "a.o", "--input", "libx.a",
+  ])
+
+  assert_true(opts.input_files.contains("a.o"))
+  assert_true(opts.input_files.contains("libx.a"))
+}

@@ -58,6 +58,56 @@ fn pipeline_is_exec_section(name : String) -> Bool {
 }
 
 ///|
+fn pipeline_is_efi_output(kind : @ir.OutputKind) -> Bool {
+  kind is (@ir.EfiApplication | @ir.EfiBootDriver | @ir.EfiRuntimeDriver)
+}
+
+///|
+fn pipeline_validate_option_matrix(
+  opts : @ir.LinkOptions,
+  diagnostics : Array[@resolve.Diagnostic],
+) -> Unit raise @ir.LinkError {
+  if pipeline_is_efi_output(opts.output_kind) {
+    if opts.dynamic_linker is Some(ld) && ld != "" {
+      raise Cli(
+        @ir.InvalidArgs("dynamic-linker is not supported for EFI outputs"),
+      )
+    }
+    if opts.dynamic_libs.length() > 0 {
+      raise Cli(
+        @ir.InvalidArgs(
+          "dynamic libraries are not supported for EFI outputs",
+        ),
+      )
+    }
+  }
+
+  if opts.output_kind is @ir.Relocatable && opts.start_address != 0UL {
+    diagnostics.push(
+      pipeline_diag(
+        Warning,
+        "PIPELINE_START_ADDRESS_IGNORED",
+        "start-address is ignored for relocatable output",
+        file="<options>",
+      ),
+    )
+  }
+
+  if !(opts.output_kind is @ir.ExecutablePie) {
+    if opts.dynamic_linker is Some(ld) && ld != "" {
+      diagnostics.push(
+        pipeline_diag(
+          Warning,
+          "PIPELINE_DYNAMIC_LINKER_IGNORED",
+          "dynamic-linker is only used for executable PIE output",
+          file="<options>",
+        ),
+      )
+    }
+  }
+}
+
+///|
 fn pipeline_find_fallback_entry(ir : @ir.LinkIr) -> String? {
   let candidates = ["_start", "main"]
   for cand in candidates {
@@ -220,6 +270,8 @@ pub fn run_pipeline(
       ),
     )
   }
+
+  pipeline_validate_option_matrix(opts, diagnostics)
 
   let ir = build_ir(inputs, opts)
   diagnostics.push(

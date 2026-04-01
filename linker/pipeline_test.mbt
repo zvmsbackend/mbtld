@@ -109,3 +109,63 @@ test "run_pipeline warns when executable pie fallback entry missing" {
   let codes = result.diagnostics.map(d => d.code)
   assert_true(codes.contains("PIPELINE_ENTRY_MISSING"))
 }
+
+///|
+test "run_pipeline rejects dynamic-linker for efi output" {
+  let opts = {
+    ..p_opts(),
+    output_kind: EfiApplication,
+    dynamic_linker: Some("/lib64/ld-linux-x86-64.so.2"),
+  }
+
+  let mut msg = ""
+  try {
+    ignore(run_pipeline([], opts))
+    abort("expected pipeline error")
+  } catch {
+    @ir.Cli(@ir.InvalidArgs(m)) => msg = m
+    _ => abort("unexpected pipeline error type")
+  }
+
+  inspect(msg, content="dynamic-linker is not supported for EFI outputs")
+}
+
+///|
+test "run_pipeline rejects dynamic libraries for efi output" {
+  let opts = {
+    ..p_opts(),
+    output_kind: EfiRuntimeDriver,
+    dynamic_libs: ["libc.so.6"],
+  }
+
+  let mut msg = ""
+  try {
+    ignore(run_pipeline([], opts))
+    abort("expected pipeline error")
+  } catch {
+    @ir.Cli(@ir.InvalidArgs(m)) => msg = m
+    _ => abort("unexpected pipeline error type")
+  }
+
+  inspect(msg, content="dynamic libraries are not supported for EFI outputs")
+}
+
+///|
+test "run_pipeline warns when start-address is ignored for relocatable" {
+  let opts = { ..p_opts(), start_address: 4096UL }
+  let result = run_pipeline([], opts)
+  let codes = result.diagnostics.map(d => d.code)
+  assert_true(codes.contains("PIPELINE_START_ADDRESS_IGNORED"))
+}
+
+///|
+test "run_pipeline warns when dynamic-linker is ignored outside executable pie" {
+  let opts = {
+    ..p_opts(),
+    output_kind: SharedLibrary,
+    dynamic_linker: Some("/lib64/ld-linux-x86-64.so.2"),
+  }
+  let result = run_pipeline([], opts)
+  let codes = result.diagnostics.map(d => d.code)
+  assert_true(codes.contains("PIPELINE_DYNAMIC_LINKER_IGNORED"))
+}

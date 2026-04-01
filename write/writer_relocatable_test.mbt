@@ -108,6 +108,28 @@ test "write_relocatable emits merged section payload" {
 }
 
 ///|
+test "write_relocatable drops debug sections when strip_debug is enabled" {
+  let raw = b"\x7fELF"
+  let ir = {
+    ..mk_ir([mk_input("a.o", raw)]),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 1UL, bytes: b"\x90" },
+      {
+        output_name: ".debug_info",
+        output_index: 1,
+        align: 1UL,
+        bytes: b"\x01\x02",
+      },
+    ],
+  }
+  let opts = { ..test_opts(), strip_debug: true }
+
+  let artifact = write_relocatable(ir, opts)
+
+  inspect(rr_read_u16_le(artifact.bytes, 60), content="5")
+}
+
+///|
 test "write_relocatable emits symtab and strtab" {
   let raw = b"\x7fELF"
   let ir = {

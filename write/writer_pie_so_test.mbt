@@ -1336,6 +1336,86 @@ test "write_pie_or_shared normalizes jump slot addend to zero" {
 }
 
 ///|
+test "write_pie_or_shared drops debug sections when strip_debug is enabled" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 1UL, bytes: b"\x90" },
+      {
+        output_name: ".debug_info",
+        output_index: 1,
+        align: 1UL,
+        bytes: b"\x01\x02",
+      },
+    ],
+  }
+  let opts = { ..pie_test_opts(ExecutablePie), strip_debug: true }
+
+  let artifact = write_pie_or_shared(ir, opts)
+
+  inspect(pie_read_u16_le(artifact.bytes, 60), content="3")
+}
+
+///|
+test "write_pie_or_shared keeps only relocation-needed dynsyms when strip_symbols is enabled" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 8UL, bytes: b"\x90\xC3" },
+      { output_name: ".data", output_index: 1, align: 8UL, bytes: b"\x00\x00" },
+    ],
+    merged_symbols: [
+      {
+        name: "foo",
+        output_sec: 0,
+        output_value: 0UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+      {
+        name: "puts",
+        output_sec: -1,
+        output_value: 0UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+    pending_relocs: [
+      {
+        out_sec: 1,
+        patch_off: 0UL,
+        rel_type: @model.R_X86_64_JUMP_SLOT,
+        target_sym: 1,
+        addend: 0L,
+        has_addend: true,
+      },
+    ],
+  }
+  let opts = {
+    ..pie_test_opts_with_libs(SharedLibrary, ["libc.so.6"]),
+    strip_symbols: true,
+  }
+
+  let artifact = write_pie_or_shared(ir, opts)
+  let e_shoff = pie_read_u64_le(artifact.bytes, 40).to_int()
+  let e_shnum = pie_read_u16_le(artifact.bytes, 60).to_int()
+  let sh_entsize = pie_read_u16_le(artifact.bytes, 58).to_int()
+
+  let mut dynsym_size = 0UL
+  for i in 0..<e_shnum {
+    let sh_off = e_shoff + i * sh_entsize
+    if pie_read_u32_le(artifact.bytes, sh_off + 4) == @model.SHT_DYNSYM {
+      dynsym_size = pie_read_u64_le(artifact.bytes, sh_off + 32)
+    }
+  }
+
+  // NULL symbol + one imported symbol (puts).
+  inspect(dynsym_size, content="48")
+}
+
+///|
 test "write_pie_or_shared emits got.plt and DT_PLTGOT tag" {
   let ir = {
     ..pie_mk_ir(b"\x7fELF"),

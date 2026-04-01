@@ -137,6 +137,13 @@ fn pie_program_align(opts : @ir.LinkOptions) -> UInt64 {
 }
 
 ///|
+fn pie_is_debug_section_name(name : String) -> Bool {
+  name.has_prefix(".debug") ||
+  name.has_prefix(".zdebug") ||
+  name.has_prefix(".gnu_debug")
+}
+
+///|
 fn pie_write_plt_x86_64(
   file : Array[Byte],
   plt_off : UInt64,
@@ -450,6 +457,7 @@ fn pie_visibility_to_elf(vis : @ir.Visibility) -> Byte {
 fn pie_build_dynsym(
   exported_symbols : Array[@ir.MergedSymbol],
   sym_name_offsets : Array[UInt],
+  sec_index_map : Array[Int],
 ) -> Bytes {
   let out : Array[Byte] = []
 
@@ -464,8 +472,10 @@ fn pie_build_dynsym(
     let st_info = ((pie_symbol_binding_to_elf(sym.binding).to_int() << 4) |
     pie_symbol_type_to_elf(sym.ty).to_int()).to_byte()
     let st_other = pie_visibility_to_elf(sym.vis)
-    let st_shndx = if sym.output_sec >= 0 {
-      (sym.output_sec + 1).to_uint16()
+    let st_shndx = if sym.output_sec >= 0 &&
+      sym.output_sec < sec_index_map.length() &&
+      sec_index_map[sym.output_sec] >= 0 {
+      (sec_index_map[sym.output_sec] + 1).to_uint16()
     } else {
       @model.SHN_UNDEF
     }
@@ -653,11 +663,24 @@ fn pie_extend_load_range(
 
 ///|
 fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
-  let sections = ir.merged_sections
+  let sections : Array[@ir.MergedSection] = []
+  let section_source_indices : Array[Int] = []
+  let sec_index_map = [-1].repeat(ir.merged_sections.length())
+  for i, sec in ir.merged_sections {
+    if opts.strip_debug && pie_is_debug_section_name(sec.output_name) {
+      continue
+    }
+    let new_idx = sections.length()
+    sections.push({ ..sec, output_index: new_idx })
+    section_source_indices.push(i)
+    sec_index_map[i] = new_idx
+  }
+
   let mut has_interp = false
   if opts.output_kind is @ir.ExecutablePie {
     if opts.dynamic_linker is Some(ld) && ld != "" {
       has_interp = true
+      section_source_indices.push(-1)
       sections.push({
         output_name: ".interp",
         output_index: sections.length(),
@@ -692,8 +715,16 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
     None
   }
   if opts.dynamic_libs.length() > 0 || soname is Some(_) || need_dynamic_for_exe {
-    for sym in ir.merged_symbols {
-      if pie_exportable_symbol(sym) {
+    let needed_symbols = [false].repeat(ir.merged_symbols.length())
+    for reloc in ir.pending_relocs {
+      if reloc.target_sym >= 0 && reloc.target_sym < needed_symbols.length() {
+        needed_symbols[reloc.target_sym] = true
+      }
+    }
+
+    for i, sym in ir.merged_symbols {
+      if pie_exportable_symbol(sym) &&
+        (!opts.strip_symbols || needed_symbols[i]) {
         exported_symbols.push(sym)
       }
     }
@@ -701,7 +732,8 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
     // Build a map from merged symbol index to dynsym index (0 means STN_UNDEF).
     let mut dynsym_cursor = 1
     for i, sym in ir.merged_symbols {
-      if pie_exportable_symbol(sym) {
+      if pie_exportable_symbol(sym) &&
+        (!opts.strip_symbols || needed_symbols[i]) {
         dynsym_index_map[i] = dynsym_cursor
         dynsym_cursor += 1
       }
@@ -726,24 +758,31 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
       opts.dynamic_libs,
       exported_symbols,
     )
-    let dynsym = pie_build_dynsym(exported_symbols, dyn_build.sym_name_offsets)
+    let dynsym = pie_build_dynsym(
+      exported_symbols,
+      dyn_build.sym_name_offsets,
+      sec_index_map,
+    )
     let hash = pie_build_sysv_hash(exported_symbols)
     dyn_needed_offsets = dyn_build.needed_offsets
     dyn_soname_offset = dyn_build.soname_offset
     dyn_has_soname = dyn_build.has_soname
     has_dynamic = true
+    section_source_indices.push(-1)
     sections.push({
       output_name: ".hash",
       output_index: sections.length(),
       align: 8UL,
       bytes: hash,
     })
+    section_source_indices.push(-1)
     sections.push({
       output_name: ".dynsym",
       output_index: sections.length(),
       align: 8UL,
       bytes: dynsym,
     })
+    section_source_indices.push(-1)
     sections.push({
       output_name: ".dynstr",
       output_index: sections.length(),
@@ -754,6 +793,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
       // Minimal x86_64 PLT layout: PLT0 + one 16-byte slot per JUMP_SLOT relocation.
       let plt_entry_count = 1 + plt_rela_recs.length()
       let plt = [b'\x00'].repeat(plt_entry_count * 16) |> Bytes::from_array
+      section_source_indices.push(-1)
       sections.push({
         output_name: ".plt",
         output_index: sections.length(),
@@ -765,6 +805,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
       // x86_64 .got.plt reserves first 3 entries for the lazy resolver ABI.
       let slot_count = 3 + plt_rela_recs.length()
       let got_plt = [b'\x00'].repeat(slot_count * 8) |> Bytes::from_array
+      section_source_indices.push(-1)
       sections.push({
         output_name: ".got.plt",
         output_index: sections.length(),
@@ -772,6 +813,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
         bytes: got_plt,
       })
     }
+    section_source_indices.push(-1)
     sections.push({
       output_name: ".dynamic",
       output_index: sections.length(),
@@ -791,6 +833,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
           dyn_rela_recs.length() * @model.ELF64_RELA_SIZE,
         )
         |> Bytes::from_array
+      section_source_indices.push(-1)
       sections.push({
         output_name: ".rela.dyn",
         output_index: sections.length(),
@@ -804,6 +847,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
         )
         |> Bytes::from_array
 
+      section_source_indices.push(-1)
       sections.push({
         output_name: ".rela.plt",
         output_index: sections.length(),
@@ -882,8 +926,9 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
 
     vcursor = pie_align_up_int(vcursor, sec_align)
     let sec_addr = vcursor.to_uint64()
-    if i < merged_sec_count {
-      section_addrs[i] = sec_addr
+    let src_idx = section_source_indices[i]
+    if src_idx >= 0 && src_idx < merged_sec_count {
+      section_addrs[src_idx] = sec_addr
     }
 
     let mut sec_off = 0UL
@@ -1054,6 +1099,9 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   if has_dynamic && has_rela_dyn {
     for i, rec in dyn_rela_recs {
       if rec.out_sec < 0 || rec.out_sec >= section_addrs.length() {
+        continue
+      }
+      if rec.out_sec < sec_index_map.length() && sec_index_map[rec.out_sec] < 0 {
         continue
       }
       let r_off = section_addrs[rec.out_sec] + rec.patch_off

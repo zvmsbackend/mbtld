@@ -107,6 +107,49 @@ fn rr_write_u64_le(out : Array[Byte], offset : Int, v : UInt64) -> Unit {
 }
 
 ///|
+fn rr_is_debug_section_name(name : String) -> Bool {
+  name.has_prefix(".debug") ||
+  name.has_prefix(".zdebug") ||
+  name.has_prefix(".gnu_debug")
+}
+
+///|
+fn rr_filter_debug_sections(ir : @ir.LinkIr) -> @ir.LinkIr {
+  let sec_index_map = [-1].repeat(ir.merged_sections.length())
+  let merged_sections : Array[@ir.MergedSection] = []
+  for i, sec in ir.merged_sections {
+    if rr_is_debug_section_name(sec.output_name) {
+      continue
+    }
+    let new_idx = merged_sections.length()
+    sec_index_map[i] = new_idx
+    merged_sections.push({ ..sec, output_index: new_idx })
+  }
+
+  let merged_symbols = ir.merged_symbols.map(sym => {
+    if sym.output_sec < 0 || sym.output_sec >= sec_index_map.length() {
+      { ..sym, output_sec: -1 }
+    } else {
+      { ..sym, output_sec: sec_index_map[sym.output_sec] }
+    }
+  })
+
+  let pending_relocs : Array[@ir.PendingReloc] = []
+  for rec in ir.pending_relocs {
+    if rec.out_sec < 0 || rec.out_sec >= sec_index_map.length() {
+      continue
+    }
+    let new_out_sec = sec_index_map[rec.out_sec]
+    if new_out_sec < 0 {
+      continue
+    }
+    pending_relocs.push({ ..rec, out_sec: new_out_sec })
+  }
+
+  { ..ir, merged_sections, merged_symbols, pending_relocs }
+}
+
+///|
 priv struct RrSymtabBuild {
   symtab : Bytes
   strtab : Bytes
@@ -506,11 +549,17 @@ pub fn write_relocatable(
   ir : @ir.LinkIr,
   opts : @ir.LinkOptions,
 ) -> @ir.LinkArtifact raise @ir.WriteError {
+  let output_ir = if opts.strip_debug {
+    rr_filter_debug_sections(ir)
+  } else {
+    ir
+  }
+
   if ir.input_objects.length() == 0 {
     raise LayoutFailure("no input object to emit")
   }
 
-  if ir.merged_sections.length() == 0 {
+  if output_ir.merged_sections.length() == 0 {
     if ir.input_objects.length() > 1 {
       raise LayoutFailure(
         "no merged output sections for multi-input relocatable build",
@@ -523,12 +572,12 @@ pub fn write_relocatable(
     }
   }
 
-  let payload = rr_build_elf64_relocatable(ir)
+  let payload = rr_build_elf64_relocatable(output_ir)
 
   {
     bytes: payload,
     map_text: Some(
-      "relocatable payload from \{ir.merged_sections.length()} sections, align=\{opts.section_align}",
+      "relocatable payload from \{output_ir.merged_sections.length()} sections, align=\{opts.section_align}, strip_debug=\{opts.strip_debug}",
     ),
   }
 }

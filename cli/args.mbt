@@ -87,6 +87,11 @@ fn linker_command() -> @argparse.Command {
         about="Enable smart linking optimizations",
       ),
       @argparse.FlagArg::new(
+        "smartlinking",
+        long="smartlinking",
+        about="Alias of --smart-linking",
+      ),
+      @argparse.FlagArg::new(
         "linker-heap-no-smart",
         long="linker-heap-no-smart",
         about="Disable smart adjustment for linker heap",
@@ -291,7 +296,8 @@ pub fn parse_args(args : Array[String]) -> @ir.LinkOptions raise @ir.CliError {
     matches.flags.contains("no-debug-frame"),
     no_default_lib: matches.flags.contains("no-default-lib") ||
     matches.flags.contains("no-default-library"),
-    smart_linking: matches.flags.contains("smart-linking"),
+    smart_linking: matches.flags.contains("smart-linking") ||
+    matches.flags.contains("smartlinking"),
     linker_heap_no_smart: matches.flags.contains("linker-heap-no-smart"),
     linker_heap_size,
     linker_block_size,
@@ -348,9 +354,97 @@ fn parse_alignment(s : String) -> UInt {
 ///|
 /// Parse uint64 value
 fn parse_uint64(s : String) -> UInt64 {
-  @string.parse_uint64(s) catch {
-    _ => 0
+  parse_uint64_scaled(s).unwrap_or(0)
+}
+
+///|
+fn parse_uint64_scaled(s : String) -> UInt64? {
+  if s.length() == 0 {
+    return None
   }
+
+  let mut multiplier = 1UL
+  let mut core = s
+  if s.has_suffix("K") || s.has_suffix("k") {
+    multiplier = 1024UL
+    core = s[:s.length() - 1].to_string()
+  } else if s.has_suffix("M") || s.has_suffix("m") {
+    multiplier = 1024UL * 1024UL
+    core = s[:s.length() - 1].to_string()
+  } else if s.has_suffix("G") || s.has_suffix("g") {
+    multiplier = 1024UL * 1024UL * 1024UL
+    core = s[:s.length() - 1].to_string()
+  }
+
+  let value = match parse_uint64_prefixed(core) {
+    Some(v) => v
+    None => return None
+  }
+  if multiplier > 1UL {
+    let max = 0xFFFF_FFFF_FFFF_FFFFUL
+    if value > max / multiplier {
+      return None
+    }
+  }
+  Some(value * multiplier)
+}
+
+///|
+fn parse_uint64_prefixed(s : String) -> UInt64? {
+  if s.has_prefix("0x") || s.has_prefix("0X") {
+    return parse_hex_u64(s[2:].to_string())
+  }
+  let parsed = @string.parse_uint64(s) catch { _ => return None }
+  Some(parsed)
+}
+
+///|
+fn hex_digit_value(ch : Char) -> Int? {
+  match ch {
+    '0' => Some(0)
+    '1' => Some(1)
+    '2' => Some(2)
+    '3' => Some(3)
+    '4' => Some(4)
+    '5' => Some(5)
+    '6' => Some(6)
+    '7' => Some(7)
+    '8' => Some(8)
+    '9' => Some(9)
+    'a' => Some(10)
+    'b' => Some(11)
+    'c' => Some(12)
+    'd' => Some(13)
+    'e' => Some(14)
+    'f' => Some(15)
+    'A' => Some(10)
+    'B' => Some(11)
+    'C' => Some(12)
+    'D' => Some(13)
+    'E' => Some(14)
+    'F' => Some(15)
+    _ => None
+  }
+}
+
+///|
+fn parse_hex_u64(s : String) -> UInt64? {
+  if s.length() == 0 {
+    return None
+  }
+  let mut v = 0UL
+  let max_before_shift = 0x0FFF_FFFF_FFFF_FFFFUL
+  for ch in s {
+    let d = match hex_digit_value(ch) {
+      Some(v) => v
+      None => return None
+    }
+    if v > max_before_shift {
+      return None
+    }
+    v = (v << 4) | d.to_uint64()
+  }
+  Some(v)
 }
 
 ///|

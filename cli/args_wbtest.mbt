@@ -74,3 +74,30 @@ test "parse_args accepts repeated --input option" {
   assert_true(opts.input_files.contains("a.o"))
   assert_true(opts.input_files.contains("libx.a"))
 }
+
+///|
+test "parse_args accepts pasld smartlinking alias" {
+  let opts = parse_args([
+    "mbtld", "-o", "out.o", "--relocatable", "--smartlinking",
+  ])
+
+  inspect(opts.smart_linking, content="true")
+}
+
+///|
+test "parse_args supports hex start-address" {
+  let opts = parse_args([
+    "mbtld", "-o", "a.out", "--executable", "--start-address", "0x400000",
+  ])
+
+  inspect(opts.start_address, content="4194304")
+}
+
+///|
+test "parse_args supports scaled linker-heap-size suffix" {
+  let opts = parse_args([
+    "mbtld", "-o", "out.so", "--shared", "--linker-heap-size", "1M",
+  ])
+
+  inspect(opts.linker_heap_size, content="Some(1048576)")
+}

@@ -150,6 +150,7 @@ pub(all) struct LinkOptions {
   output : String
   output_kind : OutputKind
   entry : String
+  signature : String?
   input_files : Array[String]
   dynamic_libs : Array[String]
   dynamic_linker : String?
@@ -157,6 +158,11 @@ pub(all) struct LinkOptions {
   strip_debug : Bool
   no_default_lib : Bool
   smart_linking : Bool
+  linker_heap_no_smart : Bool
+  linker_heap_size : UInt64?
+  linker_block_size : UInt64?
+  linker_block_power : UInt?
+  linker_block_level : UInt?
   section_align : UInt
   start_address : UInt64
   verbose : Bool

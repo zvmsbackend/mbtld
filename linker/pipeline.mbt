@@ -110,6 +110,110 @@ pub fn run_pipeline(
       ),
     )
   }
+  if opts.linker_heap_no_smart {
+    diagnostics.push(
+      Diagnostic::new(
+        Info,
+        "PIPELINE_LINKER_HEAP_NO_SMART",
+        "linker heap smart adjustment is disabled",
+        file="<options>",
+      ),
+    )
+  }
+  if opts.linker_heap_size is Some(size) {
+    if size == 0UL {
+      diagnostics.push(
+        Diagnostic::new(
+          Warning,
+          "PIPELINE_LINKER_HEAP_SIZE_ZERO",
+          "linker heap size is zero",
+          file="<options>",
+        ),
+      )
+    } else {
+      diagnostics.push(
+        Diagnostic::new(
+          Info,
+          "PIPELINE_LINKER_HEAP_SIZE",
+          "linker_heap_size=\{size}",
+          file="<options>",
+        ),
+      )
+    }
+  }
+  if opts.linker_block_size is Some(size) {
+    if size == 0UL {
+      diagnostics.push(
+        Diagnostic::new(
+          Warning,
+          "PIPELINE_LINKER_BLOCK_SIZE_ZERO",
+          "linker block size is zero",
+          file="<options>",
+        ),
+      )
+    } else {
+      diagnostics.push(
+        Diagnostic::new(
+          Info,
+          "PIPELINE_LINKER_BLOCK_SIZE",
+          "linker_block_size=\{size}",
+          file="<options>",
+        ),
+      )
+    }
+  }
+  if opts.linker_block_power is Some(power) {
+    if power == 0 {
+      diagnostics.push(
+        Diagnostic::new(
+          Warning,
+          "PIPELINE_LINKER_BLOCK_POWER_ZERO",
+          "linker block power is zero",
+          file="<options>",
+        ),
+      )
+    } else {
+      diagnostics.push(
+        Diagnostic::new(
+          Info,
+          "PIPELINE_LINKER_BLOCK_POWER",
+          "linker_block_power=\{power}",
+          file="<options>",
+        ),
+      )
+    }
+  }
+  if opts.linker_block_level is Some(level) {
+    if level == 0 {
+      diagnostics.push(
+        Diagnostic::new(
+          Warning,
+          "PIPELINE_LINKER_BLOCK_LEVEL_ZERO",
+          "linker block level is zero",
+          file="<options>",
+        ),
+      )
+    } else {
+      diagnostics.push(
+        Diagnostic::new(
+          Info,
+          "PIPELINE_LINKER_BLOCK_LEVEL",
+          "linker_block_level=\{level}",
+          file="<options>",
+        ),
+      )
+    }
+  }
+  if opts.signature is Some(sig) {
+    diagnostics.push(
+      Diagnostic::new(
+        Info,
+        "PIPELINE_SIGNATURE",
+        "signature=\{sig}",
+        file="<options>",
+      ),
+    )
+  }
 
   let ir = build_ir(inputs, opts)
   diagnostics.push(

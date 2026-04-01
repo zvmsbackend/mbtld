@@ -66,6 +66,11 @@ fn linker_command() -> @argparse.Command {
         long="smart-linking",
         about="Enable smart linking optimizations",
       ),
+      @argparse.FlagArg::new(
+        "linker-heap-no-smart",
+        long="linker-heap-no-smart",
+        about="Disable smart adjustment for linker heap",
+      ),
     ],
     options=[
       @argparse.OptionArg::new(
@@ -120,6 +125,31 @@ fn linker_command() -> @argparse.Command {
         long="include-dynamic-library-path-with-subdirectory",
         about="Include dynamic libraries recursively (*.so)",
       ),
+      @argparse.OptionArg::new(
+        "signature",
+        long="signature",
+        about="Signature marker to embed in output metadata",
+      ),
+      @argparse.OptionArg::new(
+        "linker-heap-size",
+        long="linker-heap-size",
+        about="Linker heap size",
+      ),
+      @argparse.OptionArg::new(
+        "linker-block-size",
+        long="linker-block-size",
+        about="Linker minimum block size",
+      ),
+      @argparse.OptionArg::new(
+        "linker-block-power",
+        long="linker-block-power",
+        about="Linker accelerate block power",
+      ),
+      @argparse.OptionArg::new(
+        "linker-block-level",
+        long="linker-block-level",
+        about="Linker block level",
+      ),
     ],
     positionals=[
       @argparse.PositionArg::new(
@@ -165,6 +195,19 @@ pub fn parse_args(args : Array[String]) -> @ir.LinkOptions raise @ir.CliError {
     _ => 0
   }
 
+  let linker_heap_size = parse_uint64_option(
+    matches.values.get("linker-heap-size"),
+  )
+  let linker_block_size = parse_uint64_option(
+    matches.values.get("linker-block-size"),
+  )
+  let linker_block_power = parse_uint_option(
+    matches.values.get("linker-block-power"),
+  )
+  let linker_block_level = parse_uint_option(
+    matches.values.get("linker-block-level"),
+  )
+
   let input_files : Array[String] = []
   for input in matches.values.get("inputs") {
     input_files.append(input)
@@ -194,6 +237,7 @@ pub fn parse_args(args : Array[String]) -> @ir.LinkOptions raise @ir.CliError {
     output: matches.values.get_or_default("output", []).get(0).unwrap_or(""),
     output_kind,
     entry: matches.values.get_or_default("entry", []).get(0).unwrap_or(""),
+    signature: matches.values.get_or_default("signature", []).get(0),
     input_files,
     dynamic_libs,
     dynamic_linker: matches.values.get_or_default("dynamic-linker", []).get(0),
@@ -201,6 +245,11 @@ pub fn parse_args(args : Array[String]) -> @ir.LinkOptions raise @ir.CliError {
     strip_debug: matches.flags.contains("strip-debug"),
     no_default_lib: matches.flags.contains("no-default-lib"),
     smart_linking: matches.flags.contains("smart-linking"),
+    linker_heap_no_smart: matches.flags.contains("linker-heap-no-smart"),
+    linker_heap_size,
+    linker_block_size,
+    linker_block_power,
+    linker_block_level,
     section_align,
     start_address,
     verbose: matches.flags.contains("verbose"),
@@ -222,6 +271,29 @@ fn parse_alignment(s : String) -> UInt {
 fn parse_uint64(s : String) -> UInt64 {
   @string.parse_uint64(s) catch {
     _ => 0
+  }
+}
+
+///|
+fn parse_uint(s : String) -> UInt {
+  @string.parse_uint(s) catch {
+    _ => 0
+  }
+}
+
+///|
+fn parse_uint64_option(values : Array[String]?) -> UInt64? {
+  match values {
+    Some([s, ..]) => Some(parse_uint64(s))
+    _ => None
+  }
+}
+
+///|
+fn parse_uint_option(values : Array[String]?) -> UInt? {
+  match values {
+    Some([s, ..]) => Some(parse_uint(s))
+    _ => None
   }
 }
 

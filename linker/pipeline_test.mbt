@@ -4,6 +4,7 @@ fn p_opts() -> @ir.LinkOptions {
     output: "out.o",
     output_kind: Relocatable,
     entry: "",
+    signature: Some("sig-v1"),
     input_files: [],
     dynamic_libs: [],
     dynamic_linker: None,
@@ -11,6 +12,11 @@ fn p_opts() -> @ir.LinkOptions {
     strip_debug: false,
     no_default_lib: true,
     smart_linking: false,
+    linker_heap_no_smart: true,
+    linker_heap_size: Some(0UL),
+    linker_block_size: Some(0UL),
+    linker_block_power: Some(0),
+    linker_block_level: Some(0),
     section_align: 4096,
     start_address: 0,
     verbose: true,
@@ -74,6 +80,12 @@ test "run_pipeline emits baseline diagnostics" {
   assert_true(codes.contains("PIPELINE_INFO"))
   assert_true(codes.contains("PIPELINE_EMPTY_INPUT"))
   assert_true(codes.contains("PIPELINE_NO_DEFAULT_LIB"))
+  assert_true(codes.contains("PIPELINE_LINKER_HEAP_NO_SMART"))
+  assert_true(codes.contains("PIPELINE_LINKER_HEAP_SIZE_ZERO"))
+  assert_true(codes.contains("PIPELINE_LINKER_BLOCK_SIZE_ZERO"))
+  assert_true(codes.contains("PIPELINE_LINKER_BLOCK_POWER_ZERO"))
+  assert_true(codes.contains("PIPELINE_LINKER_BLOCK_LEVEL_ZERO"))
+  assert_true(codes.contains("PIPELINE_SIGNATURE"))
   assert_true(codes.contains("PIPELINE_INPUTS"))
   assert_true(codes.contains("PIPELINE_MERGED_SECTIONS"))
   assert_true(codes.contains("PIPELINE_MERGED_SYMBOLS"))

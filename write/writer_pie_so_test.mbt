@@ -261,6 +261,47 @@ test "write_pie_or_shared defaults e_entry to main when _start missing" {
 }
 
 ///|
+test "write_pie_or_shared applies start_address to virtual entry" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 1UL, bytes: b"\x90\xC3" },
+    ],
+    merged_symbols: [
+      {
+        name: "_start",
+        output_sec: 0,
+        output_value: 0UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+  }
+  let opts = { ..pie_test_opts(ExecutablePie), start_address: 0x400000UL }
+
+  let artifact = write_pie_or_shared(ir, opts)
+
+  inspect(pie_read_u64_le(artifact.bytes, 24), content="4194592")
+}
+
+///|
+test "write_pie_or_shared uses section_align for PT_LOAD alignment" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 1UL, bytes: b"\xAA" },
+    ],
+  }
+  let opts = { ..pie_test_opts(ExecutablePie), section_align: 65536 }
+
+  let artifact = write_pie_or_shared(ir, opts)
+
+  // First PHDR is PT_LOAD for RX segment in this minimal input.
+  inspect(pie_read_u64_le(artifact.bytes, 112), content="65536")
+}
+
+///|
 test "write_pie_or_shared ignores explicit data symbol as entry" {
   let ir = {
     ..pie_mk_ir(b"\x7fELF"),
@@ -1240,6 +1281,58 @@ test "write_pie_or_shared emits rela.plt and DT_JMPREL tags" {
   inspect(has_dt_pltrelsz, content="true")
   inspect(has_dt_pltrel, content="true")
   inspect(has_dt_jmprel, content="true")
+}
+
+///|
+test "write_pie_or_shared normalizes jump slot addend to zero" {
+  let ir = {
+    ..pie_mk_ir(b"\x7fELF"),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 8UL, bytes: b"\x90\xC3" },
+      { output_name: ".data", output_index: 1, align: 8UL, bytes: b"\x00\x00" },
+    ],
+    merged_symbols: [
+      {
+        name: "puts",
+        output_sec: -1,
+        output_value: 0UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+    pending_relocs: [
+      {
+        out_sec: 1,
+        patch_off: 0UL,
+        rel_type: @model.R_X86_64_JUMP_SLOT,
+        target_sym: 0,
+        addend: 123L,
+        has_addend: true,
+      },
+    ],
+  }
+
+  let artifact = write_pie_or_shared(
+    ir,
+    pie_test_opts_with_libs(SharedLibrary, ["libc.so.6"]),
+  )
+
+  let e_shoff = pie_read_u64_le(artifact.bytes, 40).to_int()
+  let e_shnum = pie_read_u16_le(artifact.bytes, 60).to_int()
+  let sh_entsize = pie_read_u16_le(artifact.bytes, 58).to_int()
+
+  let mut rela_off = 0UL
+  for i in 0..<e_shnum {
+    let sh_off = e_shoff + i * sh_entsize
+    let sh_type = pie_read_u32_le(artifact.bytes, sh_off + 4)
+    let sh_size = pie_read_u64_le(artifact.bytes, sh_off + 32)
+    if sh_type == @model.SHT_RELA && sh_size == 24UL {
+      rela_off = pie_read_u64_le(artifact.bytes, sh_off + 24)
+    }
+  }
+
+  inspect(pie_read_u64_le(artifact.bytes, rela_off.to_int() + 16), content="0")
 }
 
 ///|

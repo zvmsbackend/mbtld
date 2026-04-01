@@ -128,6 +128,15 @@ fn pie_write_i32_le(out : Array[Byte], offset : Int, v : Int) -> Unit {
 }
 
 ///|
+fn pie_program_align(opts : @ir.LinkOptions) -> UInt64 {
+  if opts.section_align == 0 {
+    0x1000UL
+  } else {
+    opts.section_align.to_uint64()
+  }
+}
+
+///|
 fn pie_write_plt_x86_64(
   file : Array[Byte],
   plt_off : UInt64,
@@ -825,13 +834,14 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
   let max_ph_count = 4
   let ph_size_total = @model.ELF64_PHDR_SIZE * max_ph_count
   let data_start = @model.ELF64_EHDR_SIZE + ph_size_total
+  let seg_align = pie_program_align(opts)
 
   for _ in 0..<data_start {
     file.push(0)
   }
 
   let mut cursor = data_start
-  let mut vcursor = data_start
+  let mut vcursor = data_start + opts.start_address.to_int()
   let mut rx_range = pie_empty_load_range()
   let mut rw_range = pie_empty_load_range()
   let mut relro_range = pie_empty_load_range()
@@ -1092,9 +1102,15 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
       // .got.plt[0..2] are reserved; JUMP_SLOT entries start from index 3.
       let r_off = got_plt_addr + ((3 + i) * 8).to_uint64()
       let entry_off = rela_plt_off.to_int() + i * @model.ELF64_RELA_SIZE
+      let r_addend = if ir.arch is X86_64 &&
+        rec.rel_type == @model.R_X86_64_JUMP_SLOT {
+        0L
+      } else {
+        rec.addend
+      }
       pie_write_u64_le(file, entry_off, r_off)
       pie_write_u64_le(file, entry_off + 8, rec.r_info)
-      pie_write_u64_le(file, entry_off + 16, rec.addend.reinterpret_as_uint64())
+      pie_write_u64_le(file, entry_off + 16, r_addend.reinterpret_as_uint64())
     }
   }
 
@@ -1180,7 +1196,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
     pie_write_u64_le(file, ph_off + 24, rx_range.mem_start)
     pie_write_u64_le(file, ph_off + 32, file_end - file_start)
     pie_write_u64_le(file, ph_off + 40, rx_range.mem_end - rx_range.mem_start)
-    pie_write_u64_le(file, ph_off + 48, 0x1000UL)
+    pie_write_u64_le(file, ph_off + 48, seg_align)
     ph_idx += 1
   }
 
@@ -1195,7 +1211,7 @@ fn pie_build_elf64_dyn(ir : @ir.LinkIr, opts : @ir.LinkOptions) -> Bytes {
     pie_write_u64_le(file, ph_off + 24, rw_range.mem_start)
     pie_write_u64_le(file, ph_off + 32, file_end - file_start)
     pie_write_u64_le(file, ph_off + 40, rw_range.mem_end - rw_range.mem_start)
-    pie_write_u64_le(file, ph_off + 48, 0x1000UL)
+    pie_write_u64_le(file, ph_off + 48, seg_align)
     ph_idx += 1
   }
 

@@ -6,6 +6,8 @@ import {
 }
 
 // Values
+pub fn write_efi_image(@ir.LinkIr, @ir.LinkOptions) -> @ir.LinkArtifact raise @ir.WriteError
+
 pub fn write_pie_or_shared(@ir.LinkIr, @ir.LinkOptions) -> @ir.LinkArtifact raise @ir.WriteError
 
 pub fn write_relocatable(@ir.LinkIr, @ir.LinkOptions) -> @ir.LinkArtifact raise @ir.WriteError

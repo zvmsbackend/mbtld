@@ -70,15 +70,15 @@ pub fn link_with_diagnostics(
         e => raise Write(e)
       }
     EfiApplication =>
-      @write.write_pie_or_shared(ir, opts) catch {
+      @write.write_efi_image(ir, opts) catch {
         e => raise Write(e)
       }
     EfiBootDriver =>
-      @write.write_pie_or_shared(ir, opts) catch {
+      @write.write_efi_image(ir, opts) catch {
         e => raise Write(e)
       }
     EfiRuntimeDriver =>
-      @write.write_pie_or_shared(ir, opts) catch {
+      @write.write_efi_image(ir, opts) catch {
         e => raise Write(e)
       }
   }

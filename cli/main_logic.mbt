@@ -3,6 +3,11 @@
 ///|
 /// Run CLI and return exit code
 pub fn run_cli(args : Array[String]) -> Int {
+  if has_version_flag(args) {
+    println("mbtld version 0.1.0")
+    return 0
+  }
+
   try {
     let opts = parse_args(args)
     let result = @linker.link_with_diagnostics(opts)
@@ -52,6 +57,11 @@ pub fn run_cli(args : Array[String]) -> Int {
       99
     }
   }
+}
+
+///|
+fn has_version_flag(args : Array[String]) -> Bool {
+  args.contains("--version") || args.contains("-V")
 }
 
 ///|

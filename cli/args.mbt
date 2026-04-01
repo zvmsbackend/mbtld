@@ -100,6 +100,26 @@ fn linker_command() -> @argparse.Command {
         long="include-dynamic-library",
         about="Include dynamic library name (repeatable)",
       ),
+      @argparse.OptionArg::new(
+        "input-path",
+        long="input-path",
+        about="Include input files from a directory (*.o, *.a, *.ar)",
+      ),
+      @argparse.OptionArg::new(
+        "input-path-with-subdirectory",
+        long="input-path-with-subdirectory",
+        about="Include input files recursively (*.o, *.a, *.ar)",
+      ),
+      @argparse.OptionArg::new(
+        "include-dynamic-library-path",
+        long="include-dynamic-library-path",
+        about="Include dynamic libraries from a directory (*.so)",
+      ),
+      @argparse.OptionArg::new(
+        "include-dynamic-library-path-with-subdirectory",
+        long="include-dynamic-library-path-with-subdirectory",
+        about="Include dynamic libraries recursively (*.so)",
+      ),
     ],
     positionals=[
       @argparse.PositionArg::new(
@@ -149,10 +169,25 @@ pub fn parse_args(args : Array[String]) -> @ir.LinkOptions raise @ir.CliError {
   for input in matches.values.get("inputs") {
     input_files.append(input)
   }
+  for path in matches.values.get("input-path").unwrap_or([]) {
+    append_input_path_matches(input_files, path, false)
+  }
+  for path in matches.values.get("input-path-with-subdirectory").unwrap_or([]) {
+    append_input_path_matches(input_files, path, true)
+  }
 
   let dynamic_libs : Array[String] = []
-  for lib_name in matches.values.get("include-dynamic-library") {
-    dynamic_libs.append(lib_name)
+  for lib_name in matches.values.get("include-dynamic-library").unwrap_or([]) {
+    append_unique(dynamic_libs, lib_name)
+  }
+  for path in matches.values.get("include-dynamic-library-path").unwrap_or([]) {
+    append_dynamic_lib_path_matches(dynamic_libs, path, false)
+  }
+  for
+    path in matches.values
+    .get("include-dynamic-library-path-with-subdirectory")
+    .unwrap_or([]) {
+    append_dynamic_lib_path_matches(dynamic_libs, path, true)
   }
 
   {
@@ -187,5 +222,89 @@ fn parse_alignment(s : String) -> UInt {
 fn parse_uint64(s : String) -> UInt64 {
   @string.parse_uint64(s) catch {
     _ => 0
+  }
+}
+
+///|
+fn append_unique(items : Array[String], value : String) -> Unit {
+  if !items.contains(value) {
+    items.push(value)
+  }
+}
+
+///|
+fn has_any_suffix(name : String, suffixes : Array[String]) -> Bool {
+  for suffix in suffixes {
+    if name.has_suffix(suffix) {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn collect_paths_from_path(
+  out : Array[String],
+  path : String,
+  suffixes : Array[String],
+  recursive : Bool,
+) -> Unit raise @ir.CliError {
+  let is_file = @fs.is_file(path) catch {
+    @fs.IOError(msg) => raise @ir.InvalidArgs("cannot access \{path}: \{msg}")
+  }
+
+  if is_file {
+    if has_any_suffix(path, suffixes) {
+      append_unique(out, path)
+    }
+    return
+  }
+
+  let entries = @fs.read_dir(path) catch {
+    @fs.IOError(msg) =>
+      raise @ir.InvalidArgs(
+        "input path is not file or directory: \{path}: \{msg}",
+      )
+  }
+
+  for entry in entries {
+    let child = "\{path}/\{entry}"
+    let child_is_file = @fs.is_file(child) catch { @fs.IOError(_) => false }
+    if child_is_file {
+      if has_any_suffix(entry, suffixes) {
+        append_unique(out, child)
+      }
+      continue
+    }
+    if recursive {
+      // Ignore non-directory children; keep recursion resilient to mixed entries.
+      collect_paths_from_path(out, child, suffixes, true) catch {
+        @ir.InvalidArgs(_) => ()
+        @ir.MissingValue(_) => ()
+        @ir.UnsupportedFlag(_) => ()
+      }
+    }
+  }
+}
+
+///|
+fn append_input_path_matches(
+  input_files : Array[String],
+  path : String,
+  recursive : Bool,
+) -> Unit raise @ir.CliError {
+  collect_paths_from_path(input_files, path, [".o", ".a", ".ar"], recursive)
+}
+
+///|
+fn append_dynamic_lib_path_matches(
+  dynamic_libs : Array[String],
+  path : String,
+  recursive : Bool,
+) -> Unit raise @ir.CliError {
+  let full_paths : Array[String] = []
+  collect_paths_from_path(full_paths, path, [".so"], recursive)
+  for full in full_paths {
+    append_unique(dynamic_libs, full)
   }
 }

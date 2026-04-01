@@ -78,6 +78,25 @@ fn efi_read_u32_le(bytes : Bytes, off : Int) -> UInt {
 }
 
 ///|
+fn efi_rva_to_raw(bytes : Bytes, rva : UInt) -> Int {
+  let e_lfanew = efi_read_u32_le(bytes, 0x3C).reinterpret_as_int()
+  let sec_count = efi_read_u16_le(bytes, e_lfanew + 6).to_int()
+  let size_opt = efi_read_u16_le(bytes, e_lfanew + 20).to_int()
+  let sec_off = e_lfanew + 24 + size_opt
+  for i in 0..<sec_count {
+    let sh = sec_off + i * 40
+    let sec_rva = efi_read_u32_le(bytes, sh + 12)
+    let raw_size = efi_read_u32_le(bytes, sh + 16)
+    let raw_off = efi_read_u32_le(bytes, sh + 20)
+    if rva >= sec_rva && rva < sec_rva + raw_size {
+      let delta = (rva - sec_rva).reinterpret_as_int()
+      return raw_off.reinterpret_as_int() + delta
+    }
+  }
+  -1
+}
+
+///|
 test "write_efi_image rejects non-efi output kind" {
   let mut msg = ""
   try {
@@ -376,4 +395,374 @@ test "write_efi_image keeps relocation directory empty when no relocs" {
   let reloc_dir_off = 0x84 + 20 + 112 + 8 * 5
   inspect(efi_read_u32_le(bytes, reloc_dir_off), content="0")
   inspect(efi_read_u32_le(bytes, reloc_dir_off + 4), content="0")
+}
+
+///|
+test "write_efi_image emits sorted relocation blocks and entries" {
+  let text = [b'\x00'].repeat(0x1200)
+  let ir = {
+    ..efi_mk_ir(),
+    merged_sections: [
+      {
+        output_name: ".text",
+        output_index: 0,
+        align: 8UL,
+        bytes: Bytes::from_array(text),
+      },
+    ],
+    merged_symbols: [
+      {
+        name: "efi_main",
+        output_sec: 0,
+        output_value: 0UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+    // Intentionally out of order; writer should normalize order.
+    pending_relocs: [
+      {
+        out_sec: 0,
+        patch_off: 0x1100UL,
+        rel_type: @model.R_X86_64_64,
+        target_sym: 0,
+        addend: 0,
+        has_addend: true,
+      },
+      {
+        out_sec: 0,
+        patch_off: 0x0080UL,
+        rel_type: @model.R_X86_64_64,
+        target_sym: 0,
+        addend: 0,
+        has_addend: true,
+      },
+      {
+        out_sec: 0,
+        patch_off: 0x0070UL,
+        rel_type: @model.R_X86_64_64,
+        target_sym: 0,
+        addend: 0,
+        has_addend: true,
+      },
+    ],
+  }
+
+  let artifact = write_efi_image(ir, efi_test_opts(EfiApplication))
+  let bytes = artifact.bytes
+  let reloc_dir_off = 0x84 + 20 + 112 + 8 * 5
+  let reloc_rva = efi_read_u32_le(bytes, reloc_dir_off)
+  let reloc_raw = efi_rva_to_raw(bytes, reloc_rva)
+  inspect(reloc_raw >= 0, content="true")
+
+  let page0 = efi_read_u32_le(bytes, reloc_raw)
+  let size0 = efi_read_u32_le(bytes, reloc_raw + 4)
+  inspect(
+    page0 < efi_read_u32_le(bytes, reloc_raw + size0.reinterpret_as_int()),
+    content="true",
+  )
+
+  let e0 = efi_read_u16_le(bytes, reloc_raw + 8)
+  let e1 = efi_read_u16_le(bytes, reloc_raw + 10)
+  // same page entries sorted by offset: 0x70 then 0x80 (type 10 => 0xA000)
+  inspect(e0, content="41072")
+  inspect(e1, content="41088")
+}
+
+///|
+test "write_efi_image deduplicates identical relocation entries" {
+  let text = [b'\x00'].repeat(0x200)
+  let ir = {
+    ..efi_mk_ir(),
+    merged_sections: [
+      {
+        output_name: ".text",
+        output_index: 0,
+        align: 8UL,
+        bytes: Bytes::from_array(text),
+      },
+    ],
+    merged_symbols: [
+      {
+        name: "efi_main",
+        output_sec: 0,
+        output_value: 0UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+    pending_relocs: [
+      {
+        out_sec: 0,
+        patch_off: 0x40UL,
+        rel_type: @model.R_X86_64_64,
+        target_sym: 0,
+        addend: 0,
+        has_addend: true,
+      },
+      {
+        out_sec: 0,
+        patch_off: 0x40UL,
+        rel_type: @model.R_X86_64_64,
+        target_sym: 0,
+        addend: 0,
+        has_addend: true,
+      },
+    ],
+  }
+
+  let artifact = write_efi_image(ir, efi_test_opts(EfiApplication))
+  let bytes = artifact.bytes
+  let reloc_dir_off = 0x84 + 20 + 112 + 8 * 5
+  let reloc_rva = efi_read_u32_le(bytes, reloc_dir_off)
+  let reloc_size = efi_read_u32_le(bytes, reloc_dir_off + 4)
+  let reloc_raw = efi_rva_to_raw(bytes, reloc_rva)
+
+  inspect(reloc_size, content="12")
+  inspect(efi_read_u32_le(bytes, reloc_raw + 4), content="12")
+  inspect(efi_read_u16_le(bytes, reloc_raw + 8), content="41024")
+}
+
+///|
+test "write_efi_image keeps deterministic pe header layout" {
+  let ir = {
+    ..efi_mk_ir(),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 1UL, bytes: b"\x90\xC3" },
+    ],
+    merged_symbols: [
+      {
+        name: "efi_main",
+        output_sec: 0,
+        output_value: 0UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+  }
+
+  let artifact = write_efi_image(ir, efi_test_opts(EfiApplication))
+  let bytes = artifact.bytes
+
+  inspect(efi_read_u32_le(bytes, 0x3C), content="128")
+  inspect(efi_read_u16_le(bytes, 0x84), content="34404")
+  inspect(efi_read_u16_le(bytes, 0x84 + 2), content="1")
+  inspect(efi_read_u16_le(bytes, 0x84 + 16), content="240")
+  inspect(efi_read_u16_le(bytes, 0x84 + 20), content="523")
+  inspect(efi_read_u32_le(bytes, 0x84 + 20 + 56), content="8192")
+  inspect(efi_read_u32_le(bytes, 0x84 + 20 + 60), content="512")
+}
+
+///|
+test "write_efi_image writes image_base from start-address" {
+  let ir = {
+    ..efi_mk_ir(),
+    merged_sections: [
+      { output_name: ".text", output_index: 0, align: 1UL, bytes: b"\x90\xC3" },
+    ],
+    merged_symbols: [
+      {
+        name: "efi_main",
+        output_sec: 0,
+        output_value: 0UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+  }
+
+  let opts = { ..efi_test_opts(EfiApplication), start_address: 0x140000000UL }
+  let artifact = write_efi_image(ir, opts)
+  let bytes = artifact.bytes
+
+  let image_base = bytes[0x84 + 20 + 24].to_uint64() |
+    (bytes[0x84 + 20 + 25].to_uint64() << 8) |
+    (bytes[0x84 + 20 + 26].to_uint64() << 16) |
+    (bytes[0x84 + 20 + 27].to_uint64() << 24) |
+    (bytes[0x84 + 20 + 28].to_uint64() << 32) |
+    (bytes[0x84 + 20 + 29].to_uint64() << 40) |
+    (bytes[0x84 + 20 + 30].to_uint64() << 48) |
+    (bytes[0x84 + 20 + 31].to_uint64() << 56)
+  inspect(image_base, content="5368709120")
+}
+
+///|
+fn efi_find_section_header_off(bytes : Bytes, target : String) -> Int {
+  let e_lfanew = efi_read_u32_le(bytes, 0x3C).reinterpret_as_int()
+  let sec_count = efi_read_u16_le(bytes, e_lfanew + 6).to_int()
+  let size_opt = efi_read_u16_le(bytes, e_lfanew + 20).to_int()
+  let sec_off = e_lfanew + 24 + size_opt
+  for i in 0..<sec_count {
+    let sh = sec_off + i * 40
+    let name = bytes[sh:sh + 8].to_bytes().to_string()
+    if name.contains(target) {
+      return sh
+    }
+  }
+  -1
+}
+
+///|
+fn efi_bytes_equal_except_subsystem(a : Bytes, b : Bytes) -> Bool {
+  if a.length() != b.length() {
+    return false
+  }
+  let e_lfanew = efi_read_u32_le(a, 0x3C).reinterpret_as_int()
+  let subsystem_off = e_lfanew + 24 + 68
+  for i in 0..<a.length() {
+    if i == subsystem_off || i == subsystem_off + 1 {
+      continue
+    }
+    if a[i] != b[i] {
+      return false
+    }
+  }
+  true
+}
+
+///|
+test "write_efi_image keeps multi-section layout coherent" {
+  let ir = {
+    ..efi_mk_ir(),
+    merged_sections: [
+      {
+        output_name: ".text",
+        output_index: 0,
+        align: 16UL,
+        bytes: [b'\x90'].repeat(64) |> Bytes::from_array,
+      },
+      {
+        output_name: ".data",
+        output_index: 1,
+        align: 8UL,
+        bytes: [b'\x01'].repeat(24) |> Bytes::from_array,
+      },
+      {
+        output_name: ".rodata",
+        output_index: 2,
+        align: 8UL,
+        bytes: [b'\x02'].repeat(17) |> Bytes::from_array,
+      },
+    ],
+    merged_symbols: [
+      {
+        name: "efi_main",
+        output_sec: 0,
+        output_value: 8UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+    pending_relocs: [
+      {
+        out_sec: 1,
+        patch_off: 0UL,
+        rel_type: @model.R_X86_64_64,
+        target_sym: 0,
+        addend: 0,
+        has_addend: true,
+      },
+    ],
+  }
+
+  let artifact = write_efi_image(ir, efi_test_opts(EfiApplication))
+  let bytes = artifact.bytes
+  let e_lfanew = efi_read_u32_le(bytes, 0x3C).reinterpret_as_int()
+  let sec_count = efi_read_u16_le(bytes, e_lfanew + 6).to_int()
+  let entry_rva = efi_read_u32_le(bytes, e_lfanew + 24 + 16)
+
+  inspect(sec_count, content="4")
+
+  let text_sh = efi_find_section_header_off(bytes, ".text")
+  let data_sh = efi_find_section_header_off(bytes, ".data")
+  let rdata_sh = efi_find_section_header_off(bytes, ".rdata")
+  let reloc_sh = efi_find_section_header_off(bytes, ".reloc")
+  inspect(text_sh >= 0, content="true")
+  inspect(data_sh >= 0, content="true")
+  inspect(rdata_sh >= 0, content="true")
+  inspect(reloc_sh >= 0, content="true")
+
+  let text_rva = efi_read_u32_le(bytes, text_sh + 12)
+  let text_vsize = efi_read_u32_le(bytes, text_sh + 8)
+  let text_raw = efi_read_u32_le(bytes, text_sh + 20)
+  let data_rva = efi_read_u32_le(bytes, data_sh + 12)
+  let data_raw = efi_read_u32_le(bytes, data_sh + 20)
+  let rdata_rva = efi_read_u32_le(bytes, rdata_sh + 12)
+  let rdata_raw = efi_read_u32_le(bytes, rdata_sh + 20)
+  let reloc_rva = efi_read_u32_le(bytes, reloc_sh + 12)
+  let reloc_raw = efi_read_u32_le(bytes, reloc_sh + 20)
+
+  inspect(text_rva % 0x1000U, content="0")
+  inspect(data_rva % 0x1000U, content="0")
+  inspect(rdata_rva % 0x1000U, content="0")
+  inspect(reloc_rva % 0x1000U, content="0")
+  inspect(text_raw % 0x200U, content="0")
+  inspect(data_raw % 0x200U, content="0")
+  inspect(rdata_raw % 0x200U, content="0")
+  inspect(reloc_raw % 0x200U, content="0")
+
+  inspect(entry_rva >= text_rva, content="true")
+  inspect(entry_rva < text_rva + text_vsize, content="true")
+}
+
+///|
+test "write_efi_image keeps layout stable across EFI output kinds" {
+  let ir = {
+    ..efi_mk_ir(),
+    merged_sections: [
+      {
+        output_name: ".text",
+        output_index: 0,
+        align: 16UL,
+        bytes: [b'\x90'].repeat(64) |> Bytes::from_array,
+      },
+      {
+        output_name: ".data",
+        output_index: 1,
+        align: 8UL,
+        bytes: [b'\x01'].repeat(24) |> Bytes::from_array,
+      },
+      {
+        output_name: ".rodata",
+        output_index: 2,
+        align: 8UL,
+        bytes: [b'\x02'].repeat(17) |> Bytes::from_array,
+      },
+    ],
+    merged_symbols: [
+      {
+        name: "efi_main",
+        output_sec: 0,
+        output_value: 8UL,
+        binding: Global,
+        ty: Func,
+        vis: Default,
+      },
+    ],
+    pending_relocs: [
+      {
+        out_sec: 1,
+        patch_off: 0UL,
+        rel_type: @model.R_X86_64_64,
+        target_sym: 0,
+        addend: 0,
+        has_addend: true,
+      },
+    ],
+  }
+
+  let app = write_efi_image(ir, efi_test_opts(EfiApplication)).bytes
+  let boot = write_efi_image(ir, efi_test_opts(EfiBootDriver)).bytes
+  let runtime = write_efi_image(ir, efi_test_opts(EfiRuntimeDriver)).bytes
+
+  inspect(efi_bytes_equal_except_subsystem(app, boot), content="true")
+  inspect(efi_bytes_equal_except_subsystem(app, runtime), content="true")
+  inspect(efi_read_u16_le(app, 0x84 + 20 + 68), content="10")
+  inspect(efi_read_u16_le(boot, 0x84 + 20 + 68), content="11")
+  inspect(efi_read_u16_le(runtime, 0x84 + 20 + 68), content="12")
 }

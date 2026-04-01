@@ -177,6 +177,39 @@ fn efi_push_u32_le(out : Array[Byte], v : UInt) -> Unit {
 }
 
 ///|
+fn efi_insert_sorted_unique(values : Array[UInt], item : UInt) -> Unit {
+  let mut i = 0
+  while i < values.length() {
+    let cur = values[i]
+    if cur == item {
+      return
+    }
+    if cur > item {
+      values.insert(i, item)
+      return
+    }
+    i += 1
+  }
+  values.push(item)
+}
+
+///|
+fn efi_insert_sorted_u16(values : Array[UInt16], item : UInt16) -> Unit {
+  let mut i = 0
+  while i < values.length() {
+    if values[i] == item {
+      return
+    }
+    if values[i] > item {
+      values.insert(i, item)
+      return
+    }
+    i += 1
+  }
+  values.push(item)
+}
+
+///|
 fn efi_build_base_reloc_section(
   ir : @ir.LinkIr,
   section_rvas : Array[UInt],
@@ -203,9 +236,7 @@ fn efi_build_base_reloc_section(
 
   for rva in entries {
     let page = rva & 0xFFFFF000U
-    if !pages.contains(page) {
-      pages.push(page)
-    }
+    efi_insert_sorted_unique(pages, page)
   }
 
   for page in pages {
@@ -216,9 +247,8 @@ fn efi_build_base_reloc_section(
         continue
       }
       let off = (rva & 0xFFFU).to_uint16()
-      block_entries.push(
-        ((type_id.to_uint() << 12) | off.to_uint()).to_uint16(),
-      )
+      let item = ((type_id.to_uint() << 12) | off.to_uint()).to_uint16()
+      efi_insert_sorted_u16(block_entries, item)
     }
 
     let mut block_size = 8 + block_entries.length() * 2

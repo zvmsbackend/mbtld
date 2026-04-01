@@ -77,6 +77,11 @@ fn linker_command() -> @argparse.Command {
         about="Do not link against default libraries",
       ),
       @argparse.FlagArg::new(
+        "no-default-library",
+        long="no-default-library",
+        about="Alias of --no-default-lib",
+      ),
+      @argparse.FlagArg::new(
         "smart-linking",
         long="smart-linking",
         about="Enable smart linking optimizations",
@@ -284,7 +289,8 @@ pub fn parse_args(args : Array[String]) -> @ir.LinkOptions raise @ir.CliError {
     matches.flags.contains("no-symbol-table"),
     strip_debug: matches.flags.contains("strip-debug") ||
     matches.flags.contains("no-debug-frame"),
-    no_default_lib: matches.flags.contains("no-default-lib"),
+    no_default_lib: matches.flags.contains("no-default-lib") ||
+    matches.flags.contains("no-default-library"),
     smart_linking: matches.flags.contains("smart-linking"),
     linker_heap_no_smart: matches.flags.contains("linker-heap-no-smart"),
     linker_heap_size,

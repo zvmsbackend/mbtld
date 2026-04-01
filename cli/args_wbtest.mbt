@@ -57,6 +57,15 @@ test "parse_args accepts pasld alias option for dynamic linker path" {
 }
 
 ///|
+test "parse_args accepts pasld no-default-library alias" {
+  let opts = parse_args([
+    "mbtld", "-o", "a.out", "--executable", "--no-default-library",
+  ])
+
+  inspect(opts.no_default_lib, content="true")
+}
+
+///|
 test "parse_args accepts repeated --input option" {
   let opts = parse_args([
     "mbtld", "-o", "out.o", "--input", "a.o", "--input", "libx.a",

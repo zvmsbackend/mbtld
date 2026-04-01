@@ -51,9 +51,10 @@ fn efi_machine(arch : @ir.Arch) -> UInt16 raise @ir.WriteError {
   match arch {
     @ir.X86_64 => 0x8664 // IMAGE_FILE_MACHINE_AMD64
     @ir.AARCH64 => 0xAA64 // IMAGE_FILE_MACHINE_ARM64
+    @ir.RISCV64 => 0x5064 // IMAGE_FILE_MACHINE_RISCV64
     _ =>
       raise InvalidOutputKind(
-        "EFI PE/COFF writer currently supports x86_64 and aarch64",
+        "EFI PE/COFF writer currently supports x86_64, aarch64 and riscv64",
       )
   }
 }
@@ -137,6 +138,108 @@ priv struct EfiPlacedSection {
 }
 
 ///|
+fn efi_base_reloc_type(arch : @ir.Arch) -> UInt16 {
+  match arch {
+    @ir.X86_64 => 10 // IMAGE_REL_BASED_DIR64
+    @ir.AARCH64 => 10 // IMAGE_REL_BASED_DIR64
+    @ir.RISCV64 => 10 // IMAGE_REL_BASED_DIR64
+    _ => 0
+  }
+}
+
+///|
+fn efi_should_emit_base_reloc(arch : @ir.Arch, rel_type : UInt) -> Bool {
+  match arch {
+    @ir.X86_64 =>
+      rel_type == @model.R_X86_64_64 ||
+      rel_type == @model.R_X86_64_GLOB_DAT ||
+      rel_type == @model.R_X86_64_JUMP_SLOT ||
+      rel_type == @model.R_X86_64_RELATIVE
+    @ir.AARCH64 => rel_type == @model.R_AARCH64_ABS64
+    @ir.RISCV64 => rel_type == @model.R_RISCV_64
+    _ => false
+  }
+}
+
+///|
+fn efi_push_u16_le(out : Array[Byte], v : UInt16) -> Unit {
+  let vv = v.to_uint()
+  out.push((vv & 0xffU).to_byte())
+  out.push(((vv >> 8) & 0xffU).to_byte())
+}
+
+///|
+fn efi_push_u32_le(out : Array[Byte], v : UInt) -> Unit {
+  out.push((v & 0xffU).to_byte())
+  out.push(((v >> 8) & 0xffU).to_byte())
+  out.push(((v >> 16) & 0xffU).to_byte())
+  out.push(((v >> 24) & 0xffU).to_byte())
+}
+
+///|
+fn efi_build_base_reloc_section(
+  ir : @ir.LinkIr,
+  section_rvas : Array[UInt],
+) -> Bytes {
+  let entries : Array[UInt] = []
+  for reloc in ir.pending_relocs {
+    if reloc.out_sec < 0 || reloc.out_sec >= section_rvas.length() {
+      continue
+    }
+    if !efi_should_emit_base_reloc(ir.arch, reloc.rel_type) {
+      continue
+    }
+    let rva = section_rvas[reloc.out_sec] + reloc.patch_off.to_uint()
+    entries.push(rva)
+  }
+
+  if entries.length() == 0 {
+    return b""
+  }
+
+  let type_id = efi_base_reloc_type(ir.arch)
+  let out : Array[Byte] = []
+  let pages : Array[UInt] = []
+
+  for rva in entries {
+    let page = rva & 0xFFFFF000U
+    if !pages.contains(page) {
+      pages.push(page)
+    }
+  }
+
+  for page in pages {
+    let block_entries : Array[UInt16] = []
+    for rva in entries {
+      let p = rva & 0xFFFFF000U
+      if p != page {
+        continue
+      }
+      let off = (rva & 0xFFFU).to_uint16()
+      block_entries.push(
+        ((type_id.to_uint() << 12) | off.to_uint()).to_uint16(),
+      )
+    }
+
+    let mut block_size = 8 + block_entries.length() * 2
+    if block_size % 4 != 0 {
+      block_size += 2
+    }
+    efi_push_u32_le(out, page)
+    efi_push_u32_le(out, block_size.reinterpret_as_uint())
+    for item in block_entries {
+      efi_push_u16_le(out, item)
+    }
+    if block_entries.length() % 2 == 1 {
+      // trailing ABSOLUTE relocation padding
+      efi_push_u16_le(out, 0)
+    }
+  }
+
+  Bytes::from_array(out)
+}
+
+///|
 fn efi_build_image(
   ir : @ir.LinkIr,
   opts : @ir.LinkOptions,
@@ -153,7 +256,8 @@ fn efi_build_image(
   let coff_size = 20
   let opt_size = 0xF0
   let sec_hdr_size = 40
-  let sec_count = ir.merged_sections.length()
+  // Reserve one extra section header slot for optional .reloc.
+  let sec_count = ir.merged_sections.length() + 1
   let headers_end = pe_sig_off +
     4 +
     coff_size +
@@ -205,6 +309,29 @@ fn efi_build_image(
     }
   }
 
+  let reloc_bytes = efi_build_base_reloc_section(ir, section_rvas)
+  let has_reloc = reloc_bytes.length() > 0
+  if has_reloc {
+    let virtual_size = reloc_bytes.length().reinterpret_as_uint()
+    let raw_size = efi_align_up_int(reloc_bytes.length(), file_align).reinterpret_as_uint()
+    let raw_off = efi_align_up_int(cur_raw, file_align).reinterpret_as_uint()
+    cur_rva = efi_align_up_int(cur_rva.reinterpret_as_int(), section_align).reinterpret_as_uint()
+    placed.push({
+      name: ".reloc",
+      rva: cur_rva,
+      virtual_size,
+      raw_off,
+      raw_size,
+      chars: 0x42000040, // CNT_INITIALIZED_DATA | MEM_DISCARDABLE | MEM_READ
+      bytes: reloc_bytes,
+    })
+    cur_rva += efi_align_up_int(
+      virtual_size.reinterpret_as_int(),
+      section_align,
+    ).reinterpret_as_uint()
+    cur_raw = raw_off.reinterpret_as_int() + raw_size.reinterpret_as_int()
+  }
+
   let image_size = efi_align_up_int(cur_rva.reinterpret_as_int(), section_align).reinterpret_as_uint()
   let file_size = efi_align_up_int(cur_raw, file_align)
   let out = [b'\x00'].repeat(file_size)
@@ -223,7 +350,7 @@ fn efi_build_image(
   // COFF header
   let coff_off = pe_sig_off + 4
   efi_write_u16_le(out, coff_off, efi_machine(ir.arch))
-  efi_write_u16_le(out, coff_off + 2, sec_count.to_uint16())
+  efi_write_u16_le(out, coff_off + 2, placed.length().to_uint16())
   efi_write_u32_le(out, coff_off + 4, 0)
   efi_write_u32_le(out, coff_off + 8, 0)
   efi_write_u32_le(out, coff_off + 12, 0)
@@ -291,6 +418,12 @@ fn efi_build_image(
   efi_write_u64_le(out, opt_off + 96, 0x1000UL)
   efi_write_u32_le(out, opt_off + 104, 0)
   efi_write_u32_le(out, opt_off + 108, 16)
+  if has_reloc {
+    let reloc_sec = placed[placed.length() - 1]
+    let dir_base_reloc_off = opt_off + 112 + 8 * 5
+    efi_write_u32_le(out, dir_base_reloc_off, reloc_sec.rva)
+    efi_write_u32_le(out, dir_base_reloc_off + 4, reloc_sec.virtual_size)
+  }
 
   // Section headers
   let sec_hdr_off = opt_off + opt_size

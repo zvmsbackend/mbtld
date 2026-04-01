@@ -4,22 +4,10 @@
 /// Pipeline stage result
 pub struct PipelineResult {
   ir : @ir.LinkIr
-  diagnostics : Array[Diagnostic]
+  diagnostics : Array[@resolve.Diagnostic]
 } derive(Show)
 
 ///|
-/// Diagnostic message
-pub struct Diagnostic {
-  level : DiagLevel
-  code : String
-  message : String
-  file : String?
-  section : String?
-  symbol : String?
-} derive(Show)
-
-///|
-/// Diagnostic level
 enum DiagLevel {
   Error
   Warning
@@ -27,15 +15,33 @@ enum DiagLevel {
 } derive(Show, Eq)
 
 ///|
-fn Diagnostic::new(
+fn pipeline_diag(
   level : DiagLevel,
   code : String,
   message : String,
   file? : String,
   section? : String,
   symbol? : String,
-) -> Diagnostic {
-  { level, code, message, file, section, symbol }
+) -> @resolve.Diagnostic {
+  match level {
+    Error => @resolve.error_at(code, message, file?=file, section?=section, symbol?=symbol)
+    Warning =>
+      @resolve.warning_at(
+        code,
+        message,
+        file?=file,
+        section?=section,
+        symbol?=symbol,
+      )
+    Info =>
+      @resolve.info_at(
+        code,
+        message,
+        file?=file,
+        section?=section,
+        symbol?=symbol,
+      )
+  }
 }
 
 ///|
@@ -77,12 +83,12 @@ pub fn run_pipeline(
   inputs : Array[@ir.InputObject],
   opts : @ir.LinkOptions,
 ) -> PipelineResult raise @ir.LinkError {
-  let diagnostics : Array[Diagnostic] = []
+  let diagnostics : Array[@resolve.Diagnostic] = []
   let first_file = first_input_file(inputs)
 
   if opts.verbose {
     diagnostics.push(
-      Diagnostic::new(
+      pipeline_diag(
         Info,
         "PIPELINE_INFO",
         "running linker pipeline",
@@ -92,7 +98,7 @@ pub fn run_pipeline(
   }
   if inputs.length() == 0 {
     diagnostics.push(
-      Diagnostic::new(
+      pipeline_diag(
         Error,
         "PIPELINE_EMPTY_INPUT",
         "no input objects supplied",
@@ -102,7 +108,7 @@ pub fn run_pipeline(
   }
   if opts.no_default_lib {
     diagnostics.push(
-      Diagnostic::new(
+      pipeline_diag(
         Warning,
         "PIPELINE_NO_DEFAULT_LIB",
         "default libraries are disabled",
@@ -112,7 +118,7 @@ pub fn run_pipeline(
   }
   if opts.linker_heap_no_smart {
     diagnostics.push(
-      Diagnostic::new(
+      pipeline_diag(
         Info,
         "PIPELINE_LINKER_HEAP_NO_SMART",
         "linker heap smart adjustment is disabled",
@@ -123,7 +129,7 @@ pub fn run_pipeline(
   if opts.linker_heap_size is Some(size) {
     if size == 0UL {
       diagnostics.push(
-        Diagnostic::new(
+        pipeline_diag(
           Warning,
           "PIPELINE_LINKER_HEAP_SIZE_ZERO",
           "linker heap size is zero",
@@ -132,7 +138,7 @@ pub fn run_pipeline(
       )
     } else {
       diagnostics.push(
-        Diagnostic::new(
+        pipeline_diag(
           Info,
           "PIPELINE_LINKER_HEAP_SIZE",
           "linker_heap_size=\{size}",
@@ -144,7 +150,7 @@ pub fn run_pipeline(
   if opts.linker_block_size is Some(size) {
     if size == 0UL {
       diagnostics.push(
-        Diagnostic::new(
+        pipeline_diag(
           Warning,
           "PIPELINE_LINKER_BLOCK_SIZE_ZERO",
           "linker block size is zero",
@@ -153,7 +159,7 @@ pub fn run_pipeline(
       )
     } else {
       diagnostics.push(
-        Diagnostic::new(
+        pipeline_diag(
           Info,
           "PIPELINE_LINKER_BLOCK_SIZE",
           "linker_block_size=\{size}",
@@ -165,7 +171,7 @@ pub fn run_pipeline(
   if opts.linker_block_power is Some(power) {
     if power == 0 {
       diagnostics.push(
-        Diagnostic::new(
+        pipeline_diag(
           Warning,
           "PIPELINE_LINKER_BLOCK_POWER_ZERO",
           "linker block power is zero",
@@ -174,7 +180,7 @@ pub fn run_pipeline(
       )
     } else {
       diagnostics.push(
-        Diagnostic::new(
+        pipeline_diag(
           Info,
           "PIPELINE_LINKER_BLOCK_POWER",
           "linker_block_power=\{power}",
@@ -186,7 +192,7 @@ pub fn run_pipeline(
   if opts.linker_block_level is Some(level) {
     if level == 0 {
       diagnostics.push(
-        Diagnostic::new(
+        pipeline_diag(
           Warning,
           "PIPELINE_LINKER_BLOCK_LEVEL_ZERO",
           "linker block level is zero",
@@ -195,7 +201,7 @@ pub fn run_pipeline(
       )
     } else {
       diagnostics.push(
-        Diagnostic::new(
+        pipeline_diag(
           Info,
           "PIPELINE_LINKER_BLOCK_LEVEL",
           "linker_block_level=\{level}",
@@ -206,7 +212,7 @@ pub fn run_pipeline(
   }
   if opts.signature is Some(sig) {
     diagnostics.push(
-      Diagnostic::new(
+      pipeline_diag(
         Info,
         "PIPELINE_SIGNATURE",
         "signature=\{sig}",
@@ -217,7 +223,7 @@ pub fn run_pipeline(
 
   let ir = build_ir(inputs, opts)
   diagnostics.push(
-    Diagnostic::new(
+    pipeline_diag(
       Info,
       "PIPELINE_INPUTS",
       "inputs=\{inputs.length()}",
@@ -225,7 +231,7 @@ pub fn run_pipeline(
     ),
   )
   diagnostics.push(
-    Diagnostic::new(
+    pipeline_diag(
       Info,
       "PIPELINE_MERGED_SECTIONS",
       "merged_sections=\{ir.merged_sections.length()}",
@@ -233,7 +239,7 @@ pub fn run_pipeline(
     ),
   )
   diagnostics.push(
-    Diagnostic::new(
+    pipeline_diag(
       Info,
       "PIPELINE_MERGED_SYMBOLS",
       "merged_symbols=\{ir.merged_symbols.length()}",
@@ -241,7 +247,7 @@ pub fn run_pipeline(
     ),
   )
   diagnostics.push(
-    Diagnostic::new(
+    pipeline_diag(
       Info,
       "PIPELINE_PENDING_RELOCS",
       "pending_relocs=\{ir.pending_relocs.length()}",
@@ -251,7 +257,7 @@ pub fn run_pipeline(
 
   if ir.merged_sections.length() == 0 {
     diagnostics.push(
-      Diagnostic::new(
+      pipeline_diag(
         Warning,
         "PIPELINE_NO_SECTIONS",
         "no merged sections were produced",
@@ -265,7 +271,7 @@ pub fn run_pipeline(
     if sym.output_sec < 0 {
       unresolved_symbols += 1
       diagnostics.push(
-        Diagnostic::new(
+        pipeline_diag(
           Warning,
           "PIPELINE_UNRESOLVED_SYMBOL",
           "unresolved symbol",
@@ -276,7 +282,7 @@ pub fn run_pipeline(
   }
   if unresolved_symbols > 0 {
     diagnostics.push(
-      Diagnostic::new(
+      pipeline_diag(
         Warning,
         "PIPELINE_UNRESOLVED_SYMBOLS",
         "unresolved_symbols=\{unresolved_symbols}",
@@ -289,7 +295,7 @@ pub fn run_pipeline(
     match pipeline_find_fallback_entry(ir) {
       Some(sym_name) =>
         diagnostics.push(
-          Diagnostic::new(
+          pipeline_diag(
             Info,
             "PIPELINE_ENTRY_FALLBACK",
             "using fallback entry symbol: \{sym_name}",
@@ -299,7 +305,7 @@ pub fn run_pipeline(
         )
       None =>
         diagnostics.push(
-          Diagnostic::new(
+          pipeline_diag(
             Warning,
             "PIPELINE_ENTRY_MISSING",
             "no executable fallback entry symbol found (_start/main)",

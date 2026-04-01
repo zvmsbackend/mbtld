@@ -14,7 +14,22 @@ pub fn run_cli(args : Array[String]) -> Int {
     write_output(opts.output, result.artifact.bytes)
     if opts.verbose {
       for diag in result.diagnostics {
-        diag |> format_diag |> println
+        let level = diag.level.to_string()
+        let file_part = match diag.file {
+          Some(f) => " file=\{f}"
+          None => ""
+        }
+        let sec_part = match diag.section {
+          Some(s) => " section=\{s}"
+          None => ""
+        }
+        let sym_part = match diag.symbol {
+          Some(s) => " symbol=\{s}"
+          None => ""
+        }
+        println(
+          "[\{level}] \{diag.code}: \{diag.message}\{file_part}\{sec_part}\{sym_part}",
+        )
       }
       println("Output written to: \{opts.output}")
     }
@@ -62,24 +77,6 @@ pub fn run_cli(args : Array[String]) -> Int {
 ///|
 fn has_version_flag(args : Array[String]) -> Bool {
   args.contains("--version") || args.contains("-V")
-}
-
-///|
-fn format_diag(diag : @linker.Diagnostic) -> String {
-  let level = diag.level.to_string()
-  let file_part = match diag.file {
-    Some(f) => " file=\{f}"
-    None => ""
-  }
-  let sec_part = match diag.section {
-    Some(s) => " section=\{s}"
-    None => ""
-  }
-  let sym_part = match diag.symbol {
-    Some(s) => " symbol=\{s}"
-    None => ""
-  }
-  "[\{level}] \{diag.code}: \{diag.message}\{file_part}\{sec_part}\{sym_part}"
 }
 
 ///|

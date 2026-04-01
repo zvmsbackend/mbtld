@@ -4,7 +4,7 @@
 ///|
 pub struct LinkExecution {
   artifact : @ir.LinkArtifact
-  diagnostics : Array[Diagnostic]
+  diagnostics : Array[@resolve.Diagnostic]
 } derive(Show)
 
 ///|

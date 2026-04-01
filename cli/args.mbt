@@ -32,6 +32,11 @@ fn linker_command() -> @argparse.Command {
         about="Generate shared library",
       ),
       @argparse.FlagArg::new(
+        "dynamic-library",
+        long="dynamic-library",
+        about="Alias of --shared",
+      ),
+      @argparse.FlagArg::new(
         "efi-application",
         long="efi-application",
         about="Generate EFI application",
@@ -52,9 +57,19 @@ fn linker_command() -> @argparse.Command {
         about="Strip symbol table",
       ),
       @argparse.FlagArg::new(
+        "no-symbol-table",
+        long="no-symbol-table",
+        about="Alias of --strip-symbols",
+      ),
+      @argparse.FlagArg::new(
         "strip-debug",
         long="strip-debug",
         about="Strip debug information",
+      ),
+      @argparse.FlagArg::new(
+        "no-debug-frame",
+        long="no-debug-frame",
+        about="Alias of --strip-debug",
       ),
       @argparse.FlagArg::new(
         "no-default-lib",
@@ -99,6 +114,11 @@ fn linker_command() -> @argparse.Command {
         "dynamic-linker",
         long="dynamic-linker",
         about="Dynamic linker path",
+      ),
+      @argparse.OptionArg::new(
+        "dynamic-linker-path",
+        long="dynamic-linker-path",
+        about="Alias of --dynamic-linker",
       ),
       @argparse.OptionArg::new(
         "include-dynamic-library",
@@ -173,7 +193,8 @@ pub fn parse_args(args : Array[String]) -> @ir.LinkOptions raise @ir.CliError {
     Relocatable
   } else if matches.flags.contains("executable") {
     ExecutablePie
-  } else if matches.flags.contains("shared") {
+  } else if matches.flags.contains("shared") ||
+    matches.flags.contains("dynamic-library") {
     SharedLibrary
   } else if matches.flags.contains("efi-application") {
     EfiApplication
@@ -233,6 +254,15 @@ pub fn parse_args(args : Array[String]) -> @ir.LinkOptions raise @ir.CliError {
     append_dynamic_lib_path_matches(dynamic_libs, path, true)
   }
 
+  let dynamic_linker = match matches.values.get("dynamic-linker") {
+    Some([ld, ..]) => Some(ld)
+    _ =>
+      match matches.values.get("dynamic-linker-path") {
+        Some([ld, ..]) => Some(ld)
+        _ => None
+      }
+  }
+
   {
     output: matches.values.get_or_default("output", []).get(0).unwrap_or(""),
     output_kind,
@@ -240,9 +270,11 @@ pub fn parse_args(args : Array[String]) -> @ir.LinkOptions raise @ir.CliError {
     signature: matches.values.get_or_default("signature", []).get(0),
     input_files,
     dynamic_libs,
-    dynamic_linker: matches.values.get_or_default("dynamic-linker", []).get(0),
-    strip_symbols: matches.flags.contains("strip-symbols"),
-    strip_debug: matches.flags.contains("strip-debug"),
+    dynamic_linker,
+    strip_symbols: matches.flags.contains("strip-symbols") ||
+      matches.flags.contains("no-symbol-table"),
+    strip_debug: matches.flags.contains("strip-debug") ||
+      matches.flags.contains("no-debug-frame"),
     no_default_lib: matches.flags.contains("no-default-lib"),
     smart_linking: matches.flags.contains("smart-linking"),
     linker_heap_no_smart: matches.flags.contains("linker-heap-no-smart"),
